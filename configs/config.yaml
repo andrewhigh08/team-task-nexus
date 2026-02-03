@@ -1,0 +1,23 @@
+server:
+  port: 8080
+  read_timeout: 15s
+  write_timeout: 15s
+  shutdown_timeout: 10s
+
+database:
+  dsn: "app:apppassword@tcp(localhost:3306)/team_task_nexus?parseTime=true&loc=UTC"
+  max_open_conns: 25
+  max_idle_conns: 10
+  conn_max_lifetime: 5m
+
+redis:
+  addr: "localhost:6379"
+  password: ""
+  db: 0
+
+jwt:
+  secret: "change-me-in-production"
+  expiration: 24h
+
+rate_limit:
+  requests_per_minute: 100
