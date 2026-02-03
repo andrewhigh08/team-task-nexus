@@ -1,0 +1,22 @@
+CREATE TABLE tasks (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    description TEXT NOT NULL,
+    status ENUM('todo', 'in_progress', 'review', 'done') NOT NULL DEFAULT 'todo',
+    priority INT NOT NULL DEFAULT 2,
+    team_id BIGINT NOT NULL,
+    creator_id BIGINT NOT NULL,
+    assignee_id BIGINT NULL,
+    due_date TIMESTAMP NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_tasks_team (team_id),
+    INDEX idx_tasks_assignee (assignee_id),
+    INDEX idx_tasks_creator (creator_id),
+    INDEX idx_tasks_status (status),
+    INDEX idx_tasks_team_status (team_id, status),
+    INDEX idx_tasks_due_date (due_date),
+    CONSTRAINT fk_tasks_team FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE,
+    CONSTRAINT fk_tasks_creator FOREIGN KEY (creator_id) REFERENCES users(id) ON DELETE RESTRICT,
+    CONSTRAINT fk_tasks_assignee FOREIGN KEY (assignee_id) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
