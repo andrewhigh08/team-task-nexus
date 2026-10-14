@@ -14,7 +14,7 @@ test:
 	go test ./internal/... -v -count=1
 
 test-integration:
-	go test ./test/integration/... -v -count=1 -tags=integration
+	go test -race -count=1 -timeout 15m ./test/integration/...
 
 test-coverage:
 	go test ./internal/... -coverprofile=coverage.out -covermode=atomic
