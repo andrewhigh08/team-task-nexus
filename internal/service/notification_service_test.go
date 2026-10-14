@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/shalfey088/team-task-nexus/internal/domain"
+	"github.com/andrewhigh08/team-task-nexus/internal/domain"
 	"github.com/stretchr/testify/assert"
 )
 

@@ -32,17 +32,17 @@ func Wrap(code int, message string, err error) *AppError {
 }
 
 var (
-	ErrNotFound         = New(http.StatusNotFound, "resource not found")
-	ErrUnauthorized     = New(http.StatusUnauthorized, "unauthorized")
-	ErrForbidden        = New(http.StatusForbidden, "forbidden")
-	ErrBadRequest       = New(http.StatusBadRequest, "bad request")
-	ErrConflict         = New(http.StatusConflict, "resource already exists")
-	ErrInternal         = New(http.StatusInternalServerError, "internal server error")
+	ErrNotFound           = New(http.StatusNotFound, "resource not found")
+	ErrUnauthorized       = New(http.StatusUnauthorized, "unauthorized")
+	ErrForbidden          = New(http.StatusForbidden, "forbidden")
+	ErrBadRequest         = New(http.StatusBadRequest, "bad request")
+	ErrConflict           = New(http.StatusConflict, "resource already exists")
+	ErrInternal           = New(http.StatusInternalServerError, "internal server error")
 	ErrInvalidCredentials = New(http.StatusUnauthorized, "invalid email or password")
-	ErrEmailTaken       = New(http.StatusConflict, "email already taken")
-	ErrNotTeamMember    = New(http.StatusForbidden, "user is not a member of this team")
-	ErrInsufficientRole = New(http.StatusForbidden, "insufficient role for this action")
-	ErrRateLimited      = New(http.StatusTooManyRequests, "rate limit exceeded")
+	ErrEmailTaken         = New(http.StatusConflict, "email already taken")
+	ErrNotTeamMember      = New(http.StatusForbidden, "user is not a member of this team")
+	ErrInsufficientRole   = New(http.StatusForbidden, "insufficient role for this action")
+	ErrRateLimited        = New(http.StatusTooManyRequests, "rate limit exceeded")
 )
 
 func BadRequest(msg string) *AppError {

@@ -3,9 +3,9 @@ package middleware
 import (
 	"net/http"
 
-	"github.com/shalfey088/team-task-nexus/internal/adapter/http/response"
-	"github.com/shalfey088/team-task-nexus/internal/pkg/apperror"
-	"github.com/shalfey088/team-task-nexus/internal/port"
+	"github.com/andrewhigh08/team-task-nexus/internal/adapter/http/response"
+	"github.com/andrewhigh08/team-task-nexus/internal/pkg/apperror"
+	"github.com/andrewhigh08/team-task-nexus/internal/port"
 )
 
 func RateLimit(limiter port.RateLimiter) func(http.Handler) http.Handler {

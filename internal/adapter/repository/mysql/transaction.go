@@ -45,8 +45,8 @@ func (m *TransactionManager) WithTransaction(ctx context.Context, fn func(ctx co
 type querier interface {
 	sqlx.QueryerContext
 	sqlx.ExecerContext
-	GetContext(ctx context.Context, dest interface{}, query string, args ...interface{}) error
-	SelectContext(ctx context.Context, dest interface{}, query string, args ...interface{}) error
+	GetContext(ctx context.Context, dest any, query string, args ...any) error
+	SelectContext(ctx context.Context, dest any, query string, args ...any) error
 }
 
 func getQuerier(ctx context.Context, db *sqlx.DB) querier {

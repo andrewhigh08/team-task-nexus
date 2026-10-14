@@ -9,13 +9,13 @@ import (
 )
 
 type RateLimiter struct {
-	client           *redis.Client
+	client            *redis.Client
 	requestsPerMinute int
 }
 
 func NewRateLimiter(client *redis.Client, requestsPerMinute int) *RateLimiter {
 	return &RateLimiter{
-		client:           client,
+		client:            client,
 		requestsPerMinute: requestsPerMinute,
 	}
 }

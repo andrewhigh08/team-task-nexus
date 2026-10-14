@@ -3,9 +3,9 @@ package service
 import (
 	"context"
 
-	"github.com/shalfey088/team-task-nexus/internal/domain"
-	"github.com/shalfey088/team-task-nexus/internal/pkg/apperror"
-	"github.com/shalfey088/team-task-nexus/internal/port"
+	"github.com/andrewhigh08/team-task-nexus/internal/domain"
+	"github.com/andrewhigh08/team-task-nexus/internal/pkg/apperror"
+	"github.com/andrewhigh08/team-task-nexus/internal/port"
 )
 
 type CommentServiceImpl struct {

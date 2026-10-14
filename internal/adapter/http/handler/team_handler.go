@@ -5,12 +5,12 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/andrewhigh08/team-task-nexus/internal/adapter/http/middleware"
+	"github.com/andrewhigh08/team-task-nexus/internal/adapter/http/response"
+	"github.com/andrewhigh08/team-task-nexus/internal/domain"
+	"github.com/andrewhigh08/team-task-nexus/internal/pkg/apperror"
+	"github.com/andrewhigh08/team-task-nexus/internal/port"
 	"github.com/go-chi/chi/v5"
-	"github.com/shalfey088/team-task-nexus/internal/adapter/http/middleware"
-	"github.com/shalfey088/team-task-nexus/internal/adapter/http/response"
-	"github.com/shalfey088/team-task-nexus/internal/domain"
-	"github.com/shalfey088/team-task-nexus/internal/pkg/apperror"
-	"github.com/shalfey088/team-task-nexus/internal/port"
 )
 
 type TeamHandler struct {

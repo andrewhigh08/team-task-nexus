@@ -1,12 +1,12 @@
 package http
 
 import (
+	"github.com/andrewhigh08/team-task-nexus/internal/adapter/http/handler"
+	"github.com/andrewhigh08/team-task-nexus/internal/adapter/http/middleware"
+	"github.com/andrewhigh08/team-task-nexus/internal/port"
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/shalfey088/team-task-nexus/internal/adapter/http/handler"
-	"github.com/shalfey088/team-task-nexus/internal/adapter/http/middleware"
-	"github.com/shalfey088/team-task-nexus/internal/port"
 )
 
 type RouterDeps struct {

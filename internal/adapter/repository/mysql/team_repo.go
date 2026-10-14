@@ -5,10 +5,10 @@ import (
 	"database/sql"
 	"errors"
 
+	"github.com/andrewhigh08/team-task-nexus/internal/domain"
+	"github.com/andrewhigh08/team-task-nexus/internal/pkg/apperror"
 	"github.com/go-sql-driver/mysql"
 	"github.com/jmoiron/sqlx"
-	"github.com/shalfey088/team-task-nexus/internal/domain"
-	"github.com/shalfey088/team-task-nexus/internal/pkg/apperror"
 )
 
 type TeamRepo struct {

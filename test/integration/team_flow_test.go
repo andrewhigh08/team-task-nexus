@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shalfey088/team-task-nexus/internal/adapter/cache/redis"
-	mysqlrepo "github.com/shalfey088/team-task-nexus/internal/adapter/repository/mysql"
-	"github.com/shalfey088/team-task-nexus/internal/domain"
-	"github.com/shalfey088/team-task-nexus/internal/service"
+	"github.com/andrewhigh08/team-task-nexus/internal/adapter/cache/redis"
+	mysqlrepo "github.com/andrewhigh08/team-task-nexus/internal/adapter/repository/mysql"
+	"github.com/andrewhigh08/team-task-nexus/internal/domain"
+	"github.com/andrewhigh08/team-task-nexus/internal/service"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

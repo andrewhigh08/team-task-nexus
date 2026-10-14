@@ -5,13 +5,13 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/shalfey088/team-task-nexus/internal/pkg/apperror"
+	"github.com/andrewhigh08/team-task-nexus/internal/pkg/apperror"
 )
 
 type Envelope struct {
-	Success bool        `json:"success"`
-	Data    interface{} `json:"data,omitempty"`
-	Error   *ErrorBody  `json:"error,omitempty"`
+	Success bool       `json:"success"`
+	Data    any        `json:"data,omitempty"`
+	Error   *ErrorBody `json:"error,omitempty"`
 }
 
 type ErrorBody struct {
@@ -19,7 +19,7 @@ type ErrorBody struct {
 	Message string `json:"message"`
 }
 
-func JSON(w http.ResponseWriter, status int, data interface{}) {
+func JSON(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(Envelope{

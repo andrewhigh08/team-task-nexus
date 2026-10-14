@@ -3,16 +3,16 @@ package service
 import (
 	"context"
 
-	"github.com/shalfey088/team-task-nexus/internal/domain"
-	"github.com/shalfey088/team-task-nexus/internal/pkg/apperror"
-	"github.com/shalfey088/team-task-nexus/internal/port"
+	"github.com/andrewhigh08/team-task-nexus/internal/domain"
+	"github.com/andrewhigh08/team-task-nexus/internal/pkg/apperror"
+	"github.com/andrewhigh08/team-task-nexus/internal/port"
 )
 
 type TeamServiceImpl struct {
-	teamRepo    port.TeamRepository
-	userRepo    port.UserRepository
-	txManager   port.TransactionManager
-	notifSvc    port.NotificationService
+	teamRepo  port.TeamRepository
+	userRepo  port.UserRepository
+	txManager port.TransactionManager
+	notifSvc  port.NotificationService
 }
 
 func NewTeamService(

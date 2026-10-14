@@ -3,7 +3,7 @@ package port
 import (
 	"context"
 
-	"github.com/shalfey088/team-task-nexus/internal/domain"
+	"github.com/andrewhigh08/team-task-nexus/internal/domain"
 )
 
 type UserRepository interface {

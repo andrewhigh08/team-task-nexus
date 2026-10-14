@@ -3,9 +3,9 @@ package mysql
 import (
 	"context"
 
+	"github.com/andrewhigh08/team-task-nexus/internal/domain"
+	"github.com/andrewhigh08/team-task-nexus/internal/pkg/apperror"
 	"github.com/jmoiron/sqlx"
-	"github.com/shalfey088/team-task-nexus/internal/domain"
-	"github.com/shalfey088/team-task-nexus/internal/pkg/apperror"
 )
 
 type CommentRepo struct {

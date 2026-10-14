@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/andrewhigh08/team-task-nexus/internal/domain"
+	"github.com/andrewhigh08/team-task-nexus/internal/pkg/apperror"
 	"github.com/jmoiron/sqlx"
-	"github.com/shalfey088/team-task-nexus/internal/domain"
-	"github.com/shalfey088/team-task-nexus/internal/pkg/apperror"
 )
 
 type TaskRepo struct {
@@ -66,7 +66,7 @@ func (r *TaskRepo) List(ctx context.Context, filter domain.TaskFilter) ([]domain
 	q := getQuerier(ctx, r.db)
 
 	var conditions []string
-	var args []interface{}
+	var args []any
 
 	if filter.TeamID > 0 {
 		conditions = append(conditions, "team_id = ?")

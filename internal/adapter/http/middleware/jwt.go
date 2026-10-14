@@ -5,9 +5,9 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/andrewhigh08/team-task-nexus/internal/adapter/http/response"
+	"github.com/andrewhigh08/team-task-nexus/internal/pkg/apperror"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/shalfey088/team-task-nexus/internal/adapter/http/response"
-	"github.com/shalfey088/team-task-nexus/internal/pkg/apperror"
 )
 
 type ctxKey string
@@ -29,7 +29,7 @@ func JWTAuth(secret string) func(http.Handler) http.Handler {
 				return
 			}
 
-			token, err := jwt.Parse(parts[1], func(token *jwt.Token) (interface{}, error) {
+			token, err := jwt.Parse(parts[1], func(token *jwt.Token) (any, error) {
 				if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 					return nil, apperror.ErrUnauthorized
 				}

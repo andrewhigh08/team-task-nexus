@@ -16,12 +16,12 @@ import (
 	"github.com/jmoiron/sqlx"
 	goredis "github.com/redis/go-redis/v9"
 
-	"github.com/shalfey088/team-task-nexus/internal/adapter/cache/redis"
-	apphttp "github.com/shalfey088/team-task-nexus/internal/adapter/http"
-	"github.com/shalfey088/team-task-nexus/internal/adapter/http/handler"
-	"github.com/shalfey088/team-task-nexus/internal/adapter/repository/mysql"
-	"github.com/shalfey088/team-task-nexus/internal/config"
-	"github.com/shalfey088/team-task-nexus/internal/service"
+	"github.com/andrewhigh08/team-task-nexus/internal/adapter/cache/redis"
+	apphttp "github.com/andrewhigh08/team-task-nexus/internal/adapter/http"
+	"github.com/andrewhigh08/team-task-nexus/internal/adapter/http/handler"
+	"github.com/andrewhigh08/team-task-nexus/internal/adapter/repository/mysql"
+	"github.com/andrewhigh08/team-task-nexus/internal/config"
+	"github.com/andrewhigh08/team-task-nexus/internal/service"
 )
 
 func main() {

@@ -3,7 +3,7 @@ package handler
 import (
 	"net/http"
 
-	"github.com/shalfey088/team-task-nexus/internal/adapter/http/response"
+	"github.com/andrewhigh08/team-task-nexus/internal/adapter/http/response"
 )
 
 type HealthHandler struct{}

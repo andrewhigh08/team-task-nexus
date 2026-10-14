@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/andrewhigh08/team-task-nexus/internal/domain"
 	"github.com/redis/go-redis/v9"
-	"github.com/shalfey088/team-task-nexus/internal/domain"
 )
 
 const taskCacheTTL = 5 * time.Minute

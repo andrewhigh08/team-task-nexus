@@ -23,17 +23,17 @@ const (
 )
 
 type Task struct {
-	ID          int64          `json:"id" db:"id"`
-	Title       string         `json:"title" db:"title"`
-	Description string         `json:"description" db:"description"`
-	Status      TaskStatus     `json:"status" db:"status"`
-	Priority    TaskPriority   `json:"priority" db:"priority"`
-	TeamID      int64          `json:"team_id" db:"team_id"`
-	CreatorID   int64          `json:"creator_id" db:"creator_id"`
-	AssigneeID  sql.NullInt64  `json:"assignee_id" db:"assignee_id"`
-	DueDate     sql.NullTime   `json:"due_date" db:"due_date"`
-	CreatedAt   time.Time      `json:"created_at" db:"created_at"`
-	UpdatedAt   time.Time      `json:"updated_at" db:"updated_at"`
+	ID          int64         `json:"id" db:"id"`
+	Title       string        `json:"title" db:"title"`
+	Description string        `json:"description" db:"description"`
+	Status      TaskStatus    `json:"status" db:"status"`
+	Priority    TaskPriority  `json:"priority" db:"priority"`
+	TeamID      int64         `json:"team_id" db:"team_id"`
+	CreatorID   int64         `json:"creator_id" db:"creator_id"`
+	AssigneeID  sql.NullInt64 `json:"assignee_id" db:"assignee_id"`
+	DueDate     sql.NullTime  `json:"due_date" db:"due_date"`
+	CreatedAt   time.Time     `json:"created_at" db:"created_at"`
+	UpdatedAt   time.Time     `json:"updated_at" db:"updated_at"`
 }
 
 type CreateTaskRequest struct {

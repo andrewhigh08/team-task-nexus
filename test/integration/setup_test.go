@@ -56,9 +56,9 @@ func setupMySQL(ctx context.Context) (testcontainers.Container, *sqlx.DB, error)
 		ExposedPorts: []string{"3306/tcp"},
 		Env: map[string]string{
 			"MYSQL_ROOT_PASSWORD": "root",
-			"MYSQL_DATABASE":     "test_db",
-			"MYSQL_USER":         "test",
-			"MYSQL_PASSWORD":     "test",
+			"MYSQL_DATABASE":      "test_db",
+			"MYSQL_USER":          "test",
+			"MYSQL_PASSWORD":      "test",
 		},
 		WaitingFor: wait.ForLog("ready for connections").
 			WithOccurrence(2).
