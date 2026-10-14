@@ -2,14 +2,24 @@ package mysqlrepo
 
 import (
 	"context"
-	"database/sql"
-	"errors"
+	"time"
 
 	"github.com/jmoiron/sqlx"
 
 	"github.com/andrewhigh08/team-task-nexus/internal/domain"
 	"github.com/andrewhigh08/team-task-nexus/internal/pkg/apperror"
 )
+
+const userColumns = "id, email, password_hash, full_name, created_at, updated_at"
+
+type userRow struct {
+	ID           int64     `db:"id"`
+	Email        string    `db:"email"`
+	PasswordHash string    `db:"password_hash"`
+	FullName     string    `db:"full_name"`
+	CreatedAt    time.Time `db:"created_at"`
+	UpdatedAt    time.Time `db:"updated_at"`
+}
 
 // UserRepo stores users.
 type UserRepo struct {
@@ -34,33 +44,27 @@ func (r *UserRepo) Create(ctx context.Context, user *domain.User) (int64, error)
 		}
 		return 0, apperror.Internal("create user", err)
 	}
-	return result.LastInsertId()
+	return insertedID(result, "create user")
 }
 
 // GetByID returns the user with the given id.
 func (r *UserRepo) GetByID(ctx context.Context, id int64) (*domain.User, error) {
-	q := getQuerier(ctx, r.db)
-	var user domain.User
-	err := q.GetContext(ctx, &user, "SELECT * FROM users WHERE id = ?", id)
+	var row userRow
+	err := getQuerier(ctx, r.db).GetContext(ctx, &row, "SELECT "+userColumns+" FROM users WHERE id = ?", id)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, apperror.NotFound("user", id)
-		}
-		return nil, apperror.Internal("get user by id", err)
+		return nil, lookupError(err, "get user by id", "user", id)
 	}
+	user := domain.User(row)
 	return &user, nil
 }
 
 // GetByEmail returns the user with the given email.
 func (r *UserRepo) GetByEmail(ctx context.Context, email string) (*domain.User, error) {
-	q := getQuerier(ctx, r.db)
-	var user domain.User
-	err := q.GetContext(ctx, &user, "SELECT * FROM users WHERE email = ?", email)
+	var row userRow
+	err := getQuerier(ctx, r.db).GetContext(ctx, &row, "SELECT "+userColumns+" FROM users WHERE email = ?", email)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, apperror.NotFound("user", email)
-		}
-		return nil, apperror.Internal("get user by email", err)
+		return nil, lookupError(err, "get user by email", "user", email)
 	}
+	user := domain.User(row)
 	return &user, nil
 }

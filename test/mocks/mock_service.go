@@ -96,93 +96,123 @@ func (m *MockTeamService) EXPECT() *MockTeamServiceMockRecorder {
 	return m.recorder
 }
 
-// Create mocks base method.
-func (m *MockTeamService) Create(ctx context.Context, userID int64, req domain.CreateTeamRequest) (*domain.Team, error) {
+// AddMember mocks base method.
+func (m *MockTeamService) AddMember(ctx context.Context, userID, teamID int64, in port.AddMemberInput) (*domain.MemberProfile, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Create", ctx, userID, req)
+	ret := m.ctrl.Call(m, "AddMember", ctx, userID, teamID, in)
+	ret0, _ := ret[0].(*domain.MemberProfile)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// AddMember indicates an expected call of AddMember.
+func (mr *MockTeamServiceMockRecorder) AddMember(ctx, userID, teamID, in any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AddMember", reflect.TypeOf((*MockTeamService)(nil).AddMember), ctx, userID, teamID, in)
+}
+
+// Create mocks base method.
+func (m *MockTeamService) Create(ctx context.Context, userID int64, in port.CreateTeamInput) (*domain.Team, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Create", ctx, userID, in)
 	ret0, _ := ret[0].(*domain.Team)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // Create indicates an expected call of Create.
-func (mr *MockTeamServiceMockRecorder) Create(ctx, userID, req any) *gomock.Call {
+func (mr *MockTeamServiceMockRecorder) Create(ctx, userID, in any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Create", reflect.TypeOf((*MockTeamService)(nil).Create), ctx, userID, req)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Create", reflect.TypeOf((*MockTeamService)(nil).Create), ctx, userID, in)
 }
 
-// GetByID mocks base method.
-func (m *MockTeamService) GetByID(ctx context.Context, userID, teamID int64) (*domain.Team, error) {
+// Get mocks base method.
+func (m *MockTeamService) Get(ctx context.Context, userID, teamID int64) (*domain.Team, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetByID", ctx, userID, teamID)
+	ret := m.ctrl.Call(m, "Get", ctx, userID, teamID)
 	ret0, _ := ret[0].(*domain.Team)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// GetByID indicates an expected call of GetByID.
-func (mr *MockTeamServiceMockRecorder) GetByID(ctx, userID, teamID any) *gomock.Call {
+// Get indicates an expected call of Get.
+func (mr *MockTeamServiceMockRecorder) Get(ctx, userID, teamID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetByID", reflect.TypeOf((*MockTeamService)(nil).GetByID), ctx, userID, teamID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Get", reflect.TypeOf((*MockTeamService)(nil).Get), ctx, userID, teamID)
 }
 
-// GetStats mocks base method.
-func (m *MockTeamService) GetStats(ctx context.Context, userID int64) ([]domain.TeamStats, error) {
+// List mocks base method.
+func (m *MockTeamService) List(ctx context.Context, userID int64) ([]domain.TeamSummary, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetStats", ctx, userID)
+	ret := m.ctrl.Call(m, "List", ctx, userID)
+	ret0, _ := ret[0].([]domain.TeamSummary)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// List indicates an expected call of List.
+func (mr *MockTeamServiceMockRecorder) List(ctx, userID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "List", reflect.TypeOf((*MockTeamService)(nil).List), ctx, userID)
+}
+
+// ListMembers mocks base method.
+func (m *MockTeamService) ListMembers(ctx context.Context, userID, teamID int64) ([]domain.MemberProfile, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListMembers", ctx, userID, teamID)
+	ret0, _ := ret[0].([]domain.MemberProfile)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListMembers indicates an expected call of ListMembers.
+func (mr *MockTeamServiceMockRecorder) ListMembers(ctx, userID, teamID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListMembers", reflect.TypeOf((*MockTeamService)(nil).ListMembers), ctx, userID, teamID)
+}
+
+// RemoveMember mocks base method.
+func (m *MockTeamService) RemoveMember(ctx context.Context, userID, teamID, memberID int64) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RemoveMember", ctx, userID, teamID, memberID)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// RemoveMember indicates an expected call of RemoveMember.
+func (mr *MockTeamServiceMockRecorder) RemoveMember(ctx, userID, teamID, memberID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RemoveMember", reflect.TypeOf((*MockTeamService)(nil).RemoveMember), ctx, userID, teamID, memberID)
+}
+
+// Stats mocks base method.
+func (m *MockTeamService) Stats(ctx context.Context, userID int64) ([]domain.TeamStats, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Stats", ctx, userID)
 	ret0, _ := ret[0].([]domain.TeamStats)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// GetStats indicates an expected call of GetStats.
-func (mr *MockTeamServiceMockRecorder) GetStats(ctx, userID any) *gomock.Call {
+// Stats indicates an expected call of Stats.
+func (mr *MockTeamServiceMockRecorder) Stats(ctx, userID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetStats", reflect.TypeOf((*MockTeamService)(nil).GetStats), ctx, userID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Stats", reflect.TypeOf((*MockTeamService)(nil).Stats), ctx, userID)
 }
 
-// GetTopContributors mocks base method.
-func (m *MockTeamService) GetTopContributors(ctx context.Context, userID, teamID int64) ([]domain.TopContributor, error) {
+// TopContributors mocks base method.
+func (m *MockTeamService) TopContributors(ctx context.Context, userID, teamID int64) ([]domain.TopContributor, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetTopContributors", ctx, userID, teamID)
+	ret := m.ctrl.Call(m, "TopContributors", ctx, userID, teamID)
 	ret0, _ := ret[0].([]domain.TopContributor)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// GetTopContributors indicates an expected call of GetTopContributors.
-func (mr *MockTeamServiceMockRecorder) GetTopContributors(ctx, userID, teamID any) *gomock.Call {
+// TopContributors indicates an expected call of TopContributors.
+func (mr *MockTeamServiceMockRecorder) TopContributors(ctx, userID, teamID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTopContributors", reflect.TypeOf((*MockTeamService)(nil).GetTopContributors), ctx, userID, teamID)
-}
-
-// InviteUser mocks base method.
-func (m *MockTeamService) InviteUser(ctx context.Context, inviterID, teamID int64, req domain.InviteRequest) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "InviteUser", ctx, inviterID, teamID, req)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// InviteUser indicates an expected call of InviteUser.
-func (mr *MockTeamServiceMockRecorder) InviteUser(ctx, inviterID, teamID, req any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "InviteUser", reflect.TypeOf((*MockTeamService)(nil).InviteUser), ctx, inviterID, teamID, req)
-}
-
-// ListByUserID mocks base method.
-func (m *MockTeamService) ListByUserID(ctx context.Context, userID int64) ([]domain.Team, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListByUserID", ctx, userID)
-	ret0, _ := ret[0].([]domain.Team)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// ListByUserID indicates an expected call of ListByUserID.
-func (mr *MockTeamServiceMockRecorder) ListByUserID(ctx, userID any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListByUserID", reflect.TypeOf((*MockTeamService)(nil).ListByUserID), ctx, userID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TopContributors", reflect.TypeOf((*MockTeamService)(nil).TopContributors), ctx, userID, teamID)
 }
 
 // MockTaskService is a mock of TaskService interface.
@@ -210,78 +240,93 @@ func (m *MockTaskService) EXPECT() *MockTaskServiceMockRecorder {
 }
 
 // Create mocks base method.
-func (m *MockTaskService) Create(ctx context.Context, userID int64, req domain.CreateTaskRequest) (*domain.Task, error) {
+func (m *MockTaskService) Create(ctx context.Context, userID int64, in port.CreateTaskInput) (*domain.Task, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Create", ctx, userID, req)
+	ret := m.ctrl.Call(m, "Create", ctx, userID, in)
 	ret0, _ := ret[0].(*domain.Task)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // Create indicates an expected call of Create.
-func (mr *MockTaskServiceMockRecorder) Create(ctx, userID, req any) *gomock.Call {
+func (mr *MockTaskServiceMockRecorder) Create(ctx, userID, in any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Create", reflect.TypeOf((*MockTaskService)(nil).Create), ctx, userID, req)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Create", reflect.TypeOf((*MockTaskService)(nil).Create), ctx, userID, in)
 }
 
-// GetHistory mocks base method.
-func (m *MockTaskService) GetHistory(ctx context.Context, userID, taskID int64) ([]domain.TaskHistory, error) {
+// Get mocks base method.
+func (m *MockTaskService) Get(ctx context.Context, userID, taskID int64) (*domain.Task, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetHistory", ctx, userID, taskID)
-	ret0, _ := ret[0].([]domain.TaskHistory)
+	ret := m.ctrl.Call(m, "Get", ctx, userID, taskID)
+	ret0, _ := ret[0].(*domain.Task)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// GetHistory indicates an expected call of GetHistory.
-func (mr *MockTaskServiceMockRecorder) GetHistory(ctx, userID, taskID any) *gomock.Call {
+// Get indicates an expected call of Get.
+func (mr *MockTaskServiceMockRecorder) Get(ctx, userID, taskID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetHistory", reflect.TypeOf((*MockTaskService)(nil).GetHistory), ctx, userID, taskID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Get", reflect.TypeOf((*MockTaskService)(nil).Get), ctx, userID, taskID)
 }
 
-// GetOrphanedAssignees mocks base method.
-func (m *MockTaskService) GetOrphanedAssignees(ctx context.Context) ([]domain.OrphanedAssignee, error) {
+// History mocks base method.
+func (m *MockTaskService) History(ctx context.Context, userID, taskID int64) ([]domain.TaskChange, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetOrphanedAssignees", ctx)
-	ret0, _ := ret[0].([]domain.OrphanedAssignee)
+	ret := m.ctrl.Call(m, "History", ctx, userID, taskID)
+	ret0, _ := ret[0].([]domain.TaskChange)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// GetOrphanedAssignees indicates an expected call of GetOrphanedAssignees.
-func (mr *MockTaskServiceMockRecorder) GetOrphanedAssignees(ctx any) *gomock.Call {
+// History indicates an expected call of History.
+func (mr *MockTaskServiceMockRecorder) History(ctx, userID, taskID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetOrphanedAssignees", reflect.TypeOf((*MockTaskService)(nil).GetOrphanedAssignees), ctx)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "History", reflect.TypeOf((*MockTaskService)(nil).History), ctx, userID, taskID)
 }
 
 // List mocks base method.
-func (m *MockTaskService) List(ctx context.Context, userID int64, filter domain.TaskFilter) (*domain.TaskListResponse, error) {
+func (m *MockTaskService) List(ctx context.Context, q domain.TaskQuery) (*domain.TaskPage, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "List", ctx, userID, filter)
-	ret0, _ := ret[0].(*domain.TaskListResponse)
+	ret := m.ctrl.Call(m, "List", ctx, q)
+	ret0, _ := ret[0].(*domain.TaskPage)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // List indicates an expected call of List.
-func (mr *MockTaskServiceMockRecorder) List(ctx, userID, filter any) *gomock.Call {
+func (mr *MockTaskServiceMockRecorder) List(ctx, q any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "List", reflect.TypeOf((*MockTaskService)(nil).List), ctx, userID, filter)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "List", reflect.TypeOf((*MockTaskService)(nil).List), ctx, q)
+}
+
+// ListOrphaned mocks base method.
+func (m *MockTaskService) ListOrphaned(ctx context.Context, userID, teamID int64) ([]domain.OrphanedAssignment, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListOrphaned", ctx, userID, teamID)
+	ret0, _ := ret[0].([]domain.OrphanedAssignment)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListOrphaned indicates an expected call of ListOrphaned.
+func (mr *MockTaskServiceMockRecorder) ListOrphaned(ctx, userID, teamID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListOrphaned", reflect.TypeOf((*MockTaskService)(nil).ListOrphaned), ctx, userID, teamID)
 }
 
 // Update mocks base method.
-func (m *MockTaskService) Update(ctx context.Context, userID, taskID int64, req domain.UpdateTaskRequest) (*domain.Task, error) {
+func (m *MockTaskService) Update(ctx context.Context, userID, taskID int64, in port.UpdateTaskInput) (*domain.Task, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Update", ctx, userID, taskID, req)
+	ret := m.ctrl.Call(m, "Update", ctx, userID, taskID, in)
 	ret0, _ := ret[0].(*domain.Task)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // Update indicates an expected call of Update.
-func (mr *MockTaskServiceMockRecorder) Update(ctx, userID, taskID, req any) *gomock.Call {
+func (mr *MockTaskServiceMockRecorder) Update(ctx, userID, taskID, in any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Update", reflect.TypeOf((*MockTaskService)(nil).Update), ctx, userID, taskID, req)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Update", reflect.TypeOf((*MockTaskService)(nil).Update), ctx, userID, taskID, in)
 }
 
 // MockCommentService is a mock of CommentService interface.
@@ -309,33 +354,33 @@ func (m *MockCommentService) EXPECT() *MockCommentServiceMockRecorder {
 }
 
 // Create mocks base method.
-func (m *MockCommentService) Create(ctx context.Context, userID, taskID int64, req domain.CreateCommentRequest) (*domain.TaskComment, error) {
+func (m *MockCommentService) Create(ctx context.Context, userID, taskID int64, in port.CreateCommentInput) (*domain.Comment, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Create", ctx, userID, taskID, req)
-	ret0, _ := ret[0].(*domain.TaskComment)
+	ret := m.ctrl.Call(m, "Create", ctx, userID, taskID, in)
+	ret0, _ := ret[0].(*domain.Comment)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // Create indicates an expected call of Create.
-func (mr *MockCommentServiceMockRecorder) Create(ctx, userID, taskID, req any) *gomock.Call {
+func (mr *MockCommentServiceMockRecorder) Create(ctx, userID, taskID, in any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Create", reflect.TypeOf((*MockCommentService)(nil).Create), ctx, userID, taskID, req)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Create", reflect.TypeOf((*MockCommentService)(nil).Create), ctx, userID, taskID, in)
 }
 
-// ListByTaskID mocks base method.
-func (m *MockCommentService) ListByTaskID(ctx context.Context, userID, taskID int64) ([]domain.TaskComment, error) {
+// List mocks base method.
+func (m *MockCommentService) List(ctx context.Context, userID, taskID int64) ([]domain.Comment, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListByTaskID", ctx, userID, taskID)
-	ret0, _ := ret[0].([]domain.TaskComment)
+	ret := m.ctrl.Call(m, "List", ctx, userID, taskID)
+	ret0, _ := ret[0].([]domain.Comment)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// ListByTaskID indicates an expected call of ListByTaskID.
-func (mr *MockCommentServiceMockRecorder) ListByTaskID(ctx, userID, taskID any) *gomock.Call {
+// List indicates an expected call of List.
+func (mr *MockCommentServiceMockRecorder) List(ctx, userID, taskID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListByTaskID", reflect.TypeOf((*MockCommentService)(nil).ListByTaskID), ctx, userID, taskID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "List", reflect.TypeOf((*MockCommentService)(nil).List), ctx, userID, taskID)
 }
 
 // MockNotificationService is a mock of NotificationService interface.
@@ -363,7 +408,7 @@ func (m *MockNotificationService) EXPECT() *MockNotificationServiceMockRecorder 
 }
 
 // NotifyCommentAdded mocks base method.
-func (m *MockNotificationService) NotifyCommentAdded(ctx context.Context, comment *domain.TaskComment, task *domain.Task) error {
+func (m *MockNotificationService) NotifyCommentAdded(ctx context.Context, comment *domain.Comment, task *domain.Task) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "NotifyCommentAdded", ctx, comment, task)
 	ret0, _ := ret[0].(error)

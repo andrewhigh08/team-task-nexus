@@ -53,7 +53,7 @@ func (s *NotificationServiceImpl) NotifyTaskAssigned(ctx context.Context, task *
 }
 
 // NotifyCommentAdded logs the notification about a new comment on task.
-func (s *NotificationServiceImpl) NotifyCommentAdded(ctx context.Context, comment *domain.TaskComment, task *domain.Task) error {
+func (s *NotificationServiceImpl) NotifyCommentAdded(ctx context.Context, comment *domain.Comment, task *domain.Task) error {
 	log := logger.FromContext(ctx)
 	if s.isCircuitOpen() {
 		log.Warn("circuit breaker open, notification skipped", "event", "comment_added", "task_id", task.ID)

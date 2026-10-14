@@ -7,8 +7,11 @@ func isNotFound(err error) bool {
 	return ok && appErr.Code == apperror.CodeNotFound
 }
 
-func errNotTeamMember() error {
-	return apperror.Forbidden("user is not a member of this team")
+// errManagerRequired is the answer to a team member who lacks the role an operation needs.
+// Unlike outsiders, members already know the team exists, so they may learn why they were
+// refused.
+func errManagerRequired() error {
+	return apperror.Forbidden("only the team owner and admins may do this")
 }
 
 // errInvalidCredentials does not say whether the email or the password was wrong, so the

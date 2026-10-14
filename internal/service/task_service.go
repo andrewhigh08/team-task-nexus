@@ -2,241 +2,337 @@ package service
 
 import (
 	"context"
-	"database/sql"
+	"errors"
 	"fmt"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/andrewhigh08/team-task-nexus/internal/domain"
-	"github.com/andrewhigh08/team-task-nexus/internal/pkg/apperror"
+	"github.com/andrewhigh08/team-task-nexus/internal/pkg/logger"
 	"github.com/andrewhigh08/team-task-nexus/internal/port"
 )
 
-type TaskServiceImpl struct {
-	taskRepo    port.TaskRepository
-	teamRepo    port.TeamRepository
-	userRepo    port.UserRepository
-	historyRepo port.TaskHistoryRepository
-	taskCache   port.TaskCache
-	txManager   port.TransactionManager
-	notifSvc    port.NotificationService
+// Paging of task lists. maxPage keeps the OFFSET the repository computes far from overflow;
+// deeper pages are better reached by narrowing the filter.
+const (
+	defaultPageSize = 20
+	maxPageSize     = 100
+	maxPage         = 10_000
+)
+
+// TaskDeps lists the collaborators of TaskService. A nil Clock means time.Now.
+type TaskDeps struct {
+	Tasks    port.TaskRepository
+	History  port.TaskHistoryRepository
+	Teams    port.TeamRepository
+	Users    port.UserRepository
+	Cache    port.TaskCache
+	Tx       port.TxManager
+	Notifier port.NotificationService
+	Clock    func() time.Time
 }
 
-func NewTaskService(
-	taskRepo port.TaskRepository,
-	teamRepo port.TeamRepository,
-	userRepo port.UserRepository,
-	historyRepo port.TaskHistoryRepository,
-	taskCache port.TaskCache,
-	txManager port.TransactionManager,
-	notifSvc port.NotificationService,
-) *TaskServiceImpl {
-	return &TaskServiceImpl{
-		taskRepo:    taskRepo,
-		teamRepo:    teamRepo,
-		userRepo:    userRepo,
-		historyRepo: historyRepo,
-		taskCache:   taskCache,
-		txManager:   txManager,
-		notifSvc:    notifSvc,
-	}
+// TaskService implements port.TaskService.
+type TaskService struct {
+	tasks    port.TaskRepository
+	history  port.TaskHistoryRepository
+	teams    port.TeamRepository
+	users    port.UserRepository
+	cache    port.TaskCache
+	tx       port.TxManager
+	notifier port.NotificationService
+	now      func() time.Time
 }
 
-func (s *TaskServiceImpl) Create(ctx context.Context, userID int64, req domain.CreateTaskRequest) (*domain.Task, error) {
-	if req.Title == "" {
-		return nil, apperror.BadRequest("task title is required")
+// NewTaskService validates deps and returns a TaskService.
+func NewTaskService(deps TaskDeps) (*TaskService, error) {
+	var missing string
+	switch {
+	case deps.Tasks == nil:
+		missing = "task repository"
+	case deps.History == nil:
+		missing = "task history repository"
+	case deps.Teams == nil:
+		missing = "team repository"
+	case deps.Users == nil:
+		missing = "user repository"
+	case deps.Cache == nil:
+		missing = "task cache"
+	case deps.Tx == nil:
+		missing = "transaction manager"
+	case deps.Notifier == nil:
+		missing = "notification service"
 	}
-	if req.TeamID == 0 {
-		return nil, apperror.BadRequest("team_id is required")
+	if missing != "" {
+		return nil, errors.New("task service: " + missing + " is required")
 	}
+	if deps.Clock == nil {
+		deps.Clock = time.Now
+	}
+	return &TaskService{
+		tasks:    deps.Tasks,
+		history:  deps.History,
+		teams:    deps.Teams,
+		users:    deps.Users,
+		cache:    deps.Cache,
+		tx:       deps.Tx,
+		notifier: deps.Notifier,
+		now:      deps.Clock,
+	}, nil
+}
 
-	member, err := s.teamRepo.GetMember(ctx, req.TeamID, userID)
-	if err != nil {
+// Create creates a task in a team of userID. The caller's and the assignee's memberships are
+// checked in the transaction that inserts the task.
+func (s *TaskService) Create(ctx context.Context, userID int64, in port.CreateTaskInput) (*domain.Task, error) {
+	if err := normalizeNewTask(&in); err != nil {
 		return nil, err
 	}
-	if member == nil {
-		return nil, errNotTeamMember()
-	}
 
-	task := &domain.Task{
-		Title:       req.Title,
-		Description: req.Description,
-		Status:      domain.TaskStatusTodo,
-		Priority:    domain.TaskPriority(req.Priority),
-		TeamID:      req.TeamID,
-		CreatorID:   userID,
-	}
-	if task.Priority == 0 {
-		task.Priority = domain.TaskPriorityMedium
-	}
-
-	if req.AssigneeID != nil {
-		task.AssigneeID = sql.NullInt64{Int64: *req.AssigneeID, Valid: true}
-	}
-	if req.DueDate != "" {
-		t, err := time.Parse("2006-01-02", req.DueDate)
+	var task *domain.Task
+	err := s.tx.WithinTx(ctx, func(ctx context.Context) error {
+		if _, err := requireMember(ctx, s.teams, in.TeamID, userID); err != nil {
+			return err
+		}
+		if in.AssigneeID != nil {
+			if err := requireAssignable(ctx, s.teams, in.TeamID, *in.AssigneeID); err != nil {
+				return err
+			}
+		}
+		id, err := s.tasks.Create(ctx, &domain.Task{
+			TeamID:      in.TeamID,
+			Title:       in.Title,
+			Description: in.Description,
+			Status:      domain.TaskStatusTodo,
+			Priority:    *in.Priority,
+			CreatorID:   userID,
+			AssigneeID:  in.AssigneeID,
+			DueDate:     in.DueDate,
+		})
 		if err != nil {
-			return nil, apperror.BadRequest("invalid due_date format, use YYYY-MM-DD")
+			return err
 		}
-		task.DueDate = sql.NullTime{Time: t, Valid: true}
-	}
-
-	id, err := s.taskRepo.Create(ctx, task)
+		// The row is read back for the timestamps the database assigned.
+		task, err = s.tasks.GetByID(ctx, id)
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
 
-	_ = s.taskCache.InvalidateTeam(ctx, req.TeamID)
-
-	task, err = s.taskRepo.GetByID(ctx, id)
-	if err != nil {
-		return nil, err
+	s.invalidateTeam(ctx, task.TeamID)
+	if task.AssigneeID != nil {
+		s.notifyAssigned(ctx, task)
 	}
-
-	if task.AssigneeID.Valid {
-		assignee, aErr := s.userRepo.GetByID(ctx, task.AssigneeID.Int64)
-		if aErr == nil {
-			_ = s.notifSvc.NotifyTaskAssigned(ctx, task, assignee)
-		}
-	}
-
 	return task, nil
 }
 
-func (s *TaskServiceImpl) Update(ctx context.Context, userID, taskID int64, req domain.UpdateTaskRequest) (*domain.Task, error) {
-	task, err := s.taskRepo.GetByID(ctx, taskID)
-	if err != nil {
+// normalizeNewTask trims the text of in, fills in the default priority and validates it.
+func normalizeNewTask(in *port.CreateTaskInput) error {
+	in.Title = strings.TrimSpace(in.Title)
+	in.Description = strings.TrimSpace(in.Description)
+	if in.Priority == nil {
+		in.Priority = new(domain.TaskPriorityMedium)
+	}
+	errs := fieldErrors{}
+	errs.checkPositive("team_id", in.TeamID)
+	errs.checkRequiredText(fieldTitle, in.Title, maxTaskTitleChars)
+	errs.checkOptionalText(fieldDescription, in.Description, maxTaskDescriptionChars)
+	errs.checkPriority(fieldPriority, *in.Priority)
+	if in.AssigneeID != nil {
+		errs.checkPositive(fieldAssignee, *in.AssigneeID)
+	}
+	return errs.err()
+}
+
+// Get returns the task to a member of its team.
+func (s *TaskService) Get(ctx context.Context, userID, taskID int64) (*domain.Task, error) {
+	return loadTask(ctx, s.tasks, s.teams, taskID, userID)
+}
+
+// Update applies in to the task inside a transaction that holds the task's row lock, so
+// concurrent updates apply one after the other and each records the values it replaced.
+func (s *TaskService) Update(ctx context.Context, userID, taskID int64, in port.UpdateTaskInput) (*domain.Task, error) {
+	if err := normalizeTaskUpdate(&in); err != nil {
 		return nil, err
 	}
 
-	member, err := s.teamRepo.GetMember(ctx, task.TeamID, userID)
-	if err != nil {
-		return nil, err
-	}
-	if member == nil {
-		return nil, errNotTeamMember()
-	}
-
-	err = s.txManager.WithTransaction(ctx, func(ctx context.Context) error {
-		if req.Title != nil && *req.Title != task.Title {
-			s.recordHistory(ctx, taskID, userID, "title", task.Title, *req.Title)
-			task.Title = *req.Title
-		}
-		if req.Description != nil && *req.Description != task.Description {
-			s.recordHistory(ctx, taskID, userID, "description", task.Description, *req.Description)
-			task.Description = *req.Description
-		}
-		if req.Status != nil && *req.Status != string(task.Status) {
-			s.recordHistory(ctx, taskID, userID, "status", string(task.Status), *req.Status)
-			task.Status = domain.TaskStatus(*req.Status)
-		}
-		if req.Priority != nil && domain.TaskPriority(*req.Priority) != task.Priority {
-			s.recordHistory(ctx, taskID, userID, "priority", fmt.Sprintf("%d", task.Priority), fmt.Sprintf("%d", *req.Priority))
-			task.Priority = domain.TaskPriority(*req.Priority)
-		}
-		if req.AssigneeID != nil {
-			oldVal := "unassigned"
-			if task.AssigneeID.Valid {
-				oldVal = fmt.Sprintf("%d", task.AssigneeID.Int64)
-			}
-			newVal := fmt.Sprintf("%d", *req.AssigneeID)
-			s.recordHistory(ctx, taskID, userID, "assignee_id", oldVal, newVal)
-			task.AssigneeID = sql.NullInt64{Int64: *req.AssigneeID, Valid: true}
-		}
-		if req.DueDate != nil {
-			oldVal := "none"
-			if task.DueDate.Valid {
-				oldVal = task.DueDate.Time.Format("2006-01-02")
-			}
-			t, err := time.Parse("2006-01-02", *req.DueDate)
-			if err != nil {
-				return apperror.BadRequest("invalid due_date format, use YYYY-MM-DD")
-			}
-			s.recordHistory(ctx, taskID, userID, "due_date", oldVal, *req.DueDate)
-			task.DueDate = sql.NullTime{Time: t, Valid: true}
-		}
-
-		return s.taskRepo.Update(ctx, task)
+	var (
+		task    *domain.Task
+		changed bool
+	)
+	err := s.tx.WithinTx(ctx, func(ctx context.Context) error {
+		var err error
+		task, changed, err = s.update(ctx, userID, taskID, in)
+		return err
 	})
 	if err != nil {
 		return nil, err
 	}
-
-	_ = s.taskCache.InvalidateTeam(ctx, task.TeamID)
-
-	return s.taskRepo.GetByID(ctx, taskID)
+	if changed {
+		s.invalidateTeam(ctx, task.TeamID)
+	}
+	return task, nil
 }
 
-func (s *TaskServiceImpl) recordHistory(ctx context.Context, taskID, userID int64, field, oldVal, newVal string) {
-	_ = s.historyRepo.Create(ctx, &domain.TaskHistory{
-		TaskID:   taskID,
-		UserID:   userID,
-		Field:    field,
-		OldValue: oldVal,
-		NewValue: newVal,
-	})
+// update is the transactional part of Update. It reports whether the task changed; an update
+// that changes no field writes neither the task nor its history.
+func (s *TaskService) update(ctx context.Context, userID, taskID int64, in port.UpdateTaskInput) (*domain.Task, bool, error) {
+	current, err := s.lockTask(ctx, userID, taskID)
+	if err != nil {
+		return nil, false, err
+	}
+	updated := *current
+	changes := applyTaskUpdate(&updated, in, userID, s.now())
+	if len(changes) == 0 {
+		return current, false, nil
+	}
+	task, err := s.save(ctx, &updated, changes)
+	if err != nil {
+		return nil, false, err
+	}
+	return task, true, nil
 }
 
-func (s *TaskServiceImpl) List(ctx context.Context, userID int64, filter domain.TaskFilter) (*domain.TaskListResponse, error) {
-	if filter.TeamID > 0 {
-		member, err := s.teamRepo.GetMember(ctx, filter.TeamID, userID)
-		if err != nil {
+// lockTask locks the task's row for the rest of the transaction, if userID may see the task.
+func (s *TaskService) lockTask(ctx context.Context, userID, taskID int64) (*domain.Task, error) {
+	task, err := s.tasks.GetByIDForUpdate(ctx, taskID)
+	if err != nil {
+		return nil, err
+	}
+	if err := requireTaskAccess(ctx, s.teams, task, userID); err != nil {
+		return nil, err
+	}
+	return task, nil
+}
+
+// save writes the updated task and the history of changes, and returns the task as stored.
+// A task can only be assigned to a member of its team.
+func (s *TaskService) save(ctx context.Context, task *domain.Task, changes []domain.TaskChange) (*domain.Task, error) {
+	if task.AssigneeID != nil && changesField(changes, fieldAssignee) {
+		if err := requireAssignable(ctx, s.teams, task.TeamID, *task.AssigneeID); err != nil {
 			return nil, err
 		}
-		if member == nil {
-			return nil, errNotTeamMember()
-		}
+	}
+	if err := s.tasks.Update(ctx, task); err != nil {
+		return nil, err
+	}
+	if err := s.history.Add(ctx, changes); err != nil {
+		return nil, err
+	}
+	return s.tasks.GetByID(ctx, task.ID)
+}
+
+func changesField(changes []domain.TaskChange, field string) bool {
+	return slices.ContainsFunc(changes, func(c domain.TaskChange) bool { return c.Field == field })
+}
+
+// List returns a page of the tasks of q.ViewerID's teams. Lists of a single team are served
+// from the cache when possible; lists across teams differ per viewer and are never cached.
+func (s *TaskService) List(ctx context.Context, q domain.TaskQuery) (*domain.TaskPage, error) {
+	if err := normalizeTaskQuery(&q); err != nil {
+		return nil, err
+	}
+	if q.TeamID == 0 {
+		return s.listFromStore(ctx, q)
 	}
 
-	cached, err := s.taskCache.GetTaskList(ctx, filter)
-	if err == nil && cached != nil {
+	if _, err := requireMember(ctx, s.teams, q.TeamID, q.ViewerID); err != nil {
+		return nil, err
+	}
+	cached, err := s.cache.GetTaskList(ctx, q)
+	if err != nil {
+		logger.FromContext(ctx).Warn("task list cache read failed", "team_id", q.TeamID, "error", err)
+	}
+	if cached != nil {
 		return cached, nil
 	}
-
-	tasks, total, err := s.taskRepo.List(ctx, filter)
+	page, err := s.listFromStore(ctx, q)
 	if err != nil {
 		return nil, err
 	}
-
-	if tasks == nil {
-		tasks = []domain.Task{}
+	if err := s.cache.SetTaskList(ctx, q, page); err != nil {
+		logger.FromContext(ctx).Warn("task list cache write failed", "team_id", q.TeamID, "error", err)
 	}
+	return page, nil
+}
 
-	pageSize := filter.PageSize
-	if pageSize < 1 {
-		pageSize = 20
+// normalizeTaskQuery fills in the default page and page size of q and validates it.
+func normalizeTaskQuery(q *domain.TaskQuery) error {
+	if q.Page == 0 {
+		q.Page = 1
 	}
-	totalPages := (total + pageSize - 1) / pageSize
+	if q.PageSize == 0 {
+		q.PageSize = defaultPageSize
+	}
+	errs := fieldErrors{}
+	if q.TeamID < 0 {
+		errs.add("team_id", msgPositive)
+	}
+	if q.AssigneeID < 0 {
+		errs.add(fieldAssignee, msgPositive)
+	}
+	if q.Status != "" {
+		errs.checkStatus(fieldStatus, q.Status)
+	}
+	if q.Page < 1 || q.Page > maxPage {
+		errs.add("page", fmt.Sprintf("must be between 1 and %d", maxPage))
+	}
+	if q.PageSize < 1 || q.PageSize > maxPageSize {
+		errs.add("page_size", fmt.Sprintf("must be between 1 and %d", maxPageSize))
+	}
+	return errs.err()
+}
 
-	response := &domain.TaskListResponse{
+func (s *TaskService) listFromStore(ctx context.Context, q domain.TaskQuery) (*domain.TaskPage, error) {
+	tasks, total, err := s.tasks.List(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	return &domain.TaskPage{
 		Tasks:      tasks,
 		Total:      total,
-		Page:       filter.Page,
-		PageSize:   pageSize,
-		TotalPages: totalPages,
-	}
-
-	_ = s.taskCache.SetTaskList(ctx, filter, response)
-
-	return response, nil
+		Page:       q.Page,
+		PageSize:   q.PageSize,
+		TotalPages: (total + q.PageSize - 1) / q.PageSize,
+	}, nil
 }
 
-func (s *TaskServiceImpl) GetHistory(ctx context.Context, userID, taskID int64) ([]domain.TaskHistory, error) {
-	task, err := s.taskRepo.GetByID(ctx, taskID)
-	if err != nil {
+// History returns the change history of the task to a member of its team.
+func (s *TaskService) History(ctx context.Context, userID, taskID int64) ([]domain.TaskChange, error) {
+	if _, err := loadTask(ctx, s.tasks, s.teams, taskID, userID); err != nil {
 		return nil, err
 	}
-
-	member, err := s.teamRepo.GetMember(ctx, task.TeamID, userID)
-	if err != nil {
-		return nil, err
-	}
-	if member == nil {
-		return nil, errNotTeamMember()
-	}
-
-	return s.historyRepo.ListByTaskID(ctx, taskID)
+	return s.history.ListByTask(ctx, taskID)
 }
 
-func (s *TaskServiceImpl) GetOrphanedAssignees(ctx context.Context) ([]domain.OrphanedAssignee, error) {
-	return s.taskRepo.GetOrphanedAssignees(ctx)
+// ListOrphaned returns the tasks of the team still assigned to users who left it, to the
+// team's owner and admins.
+func (s *TaskService) ListOrphaned(ctx context.Context, userID, teamID int64) ([]domain.OrphanedAssignment, error) {
+	if _, err := requireManager(ctx, s.teams, teamID, userID); err != nil {
+		return nil, err
+	}
+	return s.tasks.ListOrphaned(ctx, teamID)
+}
+
+// invalidateTeam drops the cached task lists of the team after a committed change. A failure
+// leaves stale pages until they expire, which is not worth failing a committed write for.
+func (s *TaskService) invalidateTeam(ctx context.Context, teamID int64) {
+	if err := s.cache.InvalidateTeam(ctx, teamID); err != nil {
+		logger.FromContext(ctx).Warn("task list cache invalidation failed", "team_id", teamID, "error", err)
+	}
+}
+
+// notifyAssigned tells the assignee of a newly created task about it. The task is already
+// committed, so failures are logged rather than returned.
+func (s *TaskService) notifyAssigned(ctx context.Context, task *domain.Task) {
+	log := logger.FromContext(ctx)
+	assignee, err := s.users.GetByID(ctx, *task.AssigneeID)
+	if err != nil {
+		log.Warn("load assignee for notification failed", "task_id", task.ID, "error", err)
+		return
+	}
+	if err := s.notifier.NotifyTaskAssigned(ctx, task, assignee); err != nil {
+		log.Warn("task assignment notification failed", "task_id", task.ID, "error", err)
+	}
 }

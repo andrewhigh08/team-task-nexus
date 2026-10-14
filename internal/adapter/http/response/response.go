@@ -22,7 +22,17 @@ var internalErrorBody = []byte(`{"success":false,"error":{"code":"` + apperror.C
 type Envelope struct {
 	Success bool       `json:"success"`
 	Data    any        `json:"data,omitempty"`
+	Meta    *Meta      `json:"meta,omitempty"`
 	Error   *ErrorBody `json:"error,omitempty"`
+}
+
+// Meta describes the page of a paged list: Data holds page number Page of TotalPages pages
+// of up to PageSize items, out of Total items.
+type Meta struct {
+	Page       int `json:"page"`
+	PageSize   int `json:"page_size"`
+	Total      int `json:"total"`
+	TotalPages int `json:"total_pages"`
 }
 
 // ErrorBody describes why a request failed.
@@ -35,6 +45,11 @@ type ErrorBody struct {
 // JSON writes data inside a success envelope with the given status.
 func JSON(w http.ResponseWriter, status int, data any) {
 	write(w, status, Envelope{Success: true, Data: data})
+}
+
+// JSONWithMeta writes one page of a paged list inside a success envelope with status 200.
+func JSONWithMeta(w http.ResponseWriter, data any, meta Meta) {
+	write(w, http.StatusOK, Envelope{Success: true, Data: data, Meta: &meta})
 }
 
 // Error writes err inside an error envelope with the status of its AppError; any other error

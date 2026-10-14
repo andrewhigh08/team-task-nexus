@@ -22,6 +22,8 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/andrewhigh08/team-task-nexus/internal/adapter/mysqlrepo"
+	"github.com/andrewhigh08/team-task-nexus/internal/adapter/redisstore"
 	"github.com/andrewhigh08/team-task-nexus/internal/port"
 	"github.com/andrewhigh08/team-task-nexus/internal/service"
 	"github.com/andrewhigh08/team-task-nexus/migrations"
@@ -89,7 +91,7 @@ func setupMySQL(ctx context.Context) (testcontainers.Container, *sqlx.DB, error)
 		return container, nil, err
 	}
 
-	dsn := fmt.Sprintf("test:test@tcp(%s:%s)/test_db?parseTime=true&loc=UTC&multiStatements=true", host, port.Port())
+	dsn := fmt.Sprintf("test:test@tcp(%s:%s)/test_db?parseTime=true&loc=UTC&multiStatements=true&clientFoundRows=true", host, port.Port())
 
 	var db *sqlx.DB
 	for i := 0; i < 30; i++ {
@@ -170,6 +172,38 @@ func newAuthService(t *testing.T, users port.UserRepository) *service.AuthServic
 	})
 	require.NoError(t, err)
 	return svc
+}
+
+// services are the team, task and comment services wired on the test database and Redis.
+type services struct {
+	auth     *service.AuthService
+	teams    *service.TeamService
+	tasks    *service.TaskService
+	comments *service.CommentService
+	cache    *redisstore.TaskCache
+}
+
+func newServices(t *testing.T) services {
+	t.Helper()
+	users := mysqlrepo.NewUserRepo(testDB)
+	teams := mysqlrepo.NewTeamRepo(testDB)
+	tasks := mysqlrepo.NewTaskRepo(testDB)
+	tx := mysqlrepo.NewTxManager(testDB)
+	cache := redisstore.NewTaskCache(testRedis)
+	notifier := service.NewNotificationService()
+
+	teamSvc, err := service.NewTeamService(service.TeamDeps{Teams: teams, Users: users, Tx: tx})
+	require.NoError(t, err)
+	taskSvc, err := service.NewTaskService(service.TaskDeps{
+		Tasks: tasks, History: mysqlrepo.NewTaskHistoryRepo(testDB), Teams: teams, Users: users,
+		Cache: cache, Tx: tx, Notifier: notifier,
+	})
+	require.NoError(t, err)
+	commentSvc, err := service.NewCommentService(service.CommentDeps{
+		Comments: mysqlrepo.NewCommentRepo(testDB), Tasks: tasks, Teams: teams, Notifier: notifier,
+	})
+	require.NoError(t, err)
+	return services{auth: newAuthService(t, users), teams: teamSvc, tasks: taskSvc, comments: commentSvc, cache: cache}
 }
 
 func cleanDB(t *testing.T) {

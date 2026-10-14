@@ -6,19 +6,29 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/andrewhigh08/team-task-nexus/internal/domain"
 	"github.com/andrewhigh08/team-task-nexus/internal/pkg/apperror"
 )
 
 // Input limits. Text limits count characters of the trimmed value. Password limits count bytes:
 // bcrypt hashes only the first 72 bytes, so a longer password would match on its prefix alone.
 const (
-	maxEmailChars    = 254
-	minPasswordBytes = 8
-	maxPasswordBytes = 72
-	maxFullNameChars = 255
+	maxEmailChars           = 254
+	minPasswordBytes        = 8
+	maxPasswordBytes        = 72
+	maxFullNameChars        = 255
+	maxTeamNameChars        = 255
+	maxTeamDescriptionChars = 5000
+	maxTaskTitleChars       = 255
+	maxTaskDescriptionChars = 10000
+	maxCommentChars         = 5000
 )
 
-const msgRequired = "is required"
+const (
+	msgRequired = "is required"
+	msgNotNull  = "must not be null"
+	msgPositive = "must be a positive integer"
+)
 
 // fieldErrors maps each invalid input field to what is wrong with it. Services check every
 // field before failing, so that a client learns about all problems in one round trip.
@@ -70,6 +80,39 @@ func (e fieldErrors) checkRequiredText(field, value string, maxChars int) {
 		e.add(field, msgRequired)
 	case utf8.RuneCountInString(value) > maxChars:
 		e.add(field, fmt.Sprintf("must be at most %d characters", maxChars))
+	}
+}
+
+// checkOptionalText expects value to be trimmed already and allows up to maxChars characters.
+func (e fieldErrors) checkOptionalText(field, value string, maxChars int) {
+	if utf8.RuneCountInString(value) > maxChars {
+		e.add(field, fmt.Sprintf("must be at most %d characters", maxChars))
+	}
+}
+
+// checkNotNull rejects a field of a partial update that was set to null although it cannot
+// be cleared.
+func (e fieldErrors) checkNotNull(field string, null bool) {
+	if null {
+		e.add(field, msgNotNull)
+	}
+}
+
+func (e fieldErrors) checkPositive(field string, id int64) {
+	if id <= 0 {
+		e.add(field, msgPositive)
+	}
+}
+
+func (e fieldErrors) checkStatus(field string, status domain.TaskStatus) {
+	if !status.Valid() {
+		e.add(field, "must be one of todo, in_progress, review, done")
+	}
+}
+
+func (e fieldErrors) checkPriority(field string, priority domain.TaskPriority) {
+	if !priority.Valid() {
+		e.add(field, "must be 1 (low), 2 (medium) or 3 (high)")
 	}
 }
 

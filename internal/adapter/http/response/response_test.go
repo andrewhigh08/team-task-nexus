@@ -51,6 +51,17 @@ func TestJSON(t *testing.T) {
 	}
 }
 
+func TestJSONWithMeta(t *testing.T) {
+	t.Parallel()
+	rec := httptest.NewRecorder()
+
+	JSONWithMeta(rec, []int{}, Meta{Page: 3, PageSize: 20, Total: 41, TotalPages: 3})
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, "application/json", rec.Header().Get("Content-Type"))
+	assert.JSONEq(t, `{"success":true,"data":[],"meta":{"page":3,"page_size":20,"total":41,"total_pages":3}}`, rec.Body.String())
+}
+
 func TestJSON_UnencodablePayload(t *testing.T) {
 	t.Parallel()
 	rec := httptest.NewRecorder()

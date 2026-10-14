@@ -2,81 +2,82 @@ package service
 
 import (
 	"context"
+	"errors"
+	"strings"
 
 	"github.com/andrewhigh08/team-task-nexus/internal/domain"
-	"github.com/andrewhigh08/team-task-nexus/internal/pkg/apperror"
+	"github.com/andrewhigh08/team-task-nexus/internal/pkg/logger"
 	"github.com/andrewhigh08/team-task-nexus/internal/port"
 )
 
-type CommentServiceImpl struct {
-	commentRepo port.CommentRepository
-	taskRepo    port.TaskRepository
-	teamRepo    port.TeamRepository
-	notifSvc    port.NotificationService
+// CommentDeps lists the collaborators of CommentService.
+type CommentDeps struct {
+	Comments port.CommentRepository
+	Tasks    port.TaskRepository
+	Teams    port.TeamRepository
+	Notifier port.NotificationService
 }
 
-func NewCommentService(
-	commentRepo port.CommentRepository,
-	taskRepo port.TaskRepository,
-	teamRepo port.TeamRepository,
-	notifSvc port.NotificationService,
-) *CommentServiceImpl {
-	return &CommentServiceImpl{
-		commentRepo: commentRepo,
-		taskRepo:    taskRepo,
-		teamRepo:    teamRepo,
-		notifSvc:    notifSvc,
-	}
+// CommentService implements port.CommentService.
+type CommentService struct {
+	comments port.CommentRepository
+	tasks    port.TaskRepository
+	teams    port.TeamRepository
+	notifier port.NotificationService
 }
 
-func (s *CommentServiceImpl) Create(ctx context.Context, userID, taskID int64, req domain.CreateCommentRequest) (*domain.TaskComment, error) {
-	if req.Content == "" {
-		return nil, apperror.BadRequest("comment content is required")
+// NewCommentService validates deps and returns a CommentService.
+func NewCommentService(deps CommentDeps) (*CommentService, error) {
+	var missing string
+	switch {
+	case deps.Comments == nil:
+		missing = "comment repository"
+	case deps.Tasks == nil:
+		missing = "task repository"
+	case deps.Teams == nil:
+		missing = "team repository"
+	case deps.Notifier == nil:
+		missing = "notification service"
+	}
+	if missing != "" {
+		return nil, errors.New("comment service: " + missing + " is required")
+	}
+	return &CommentService{comments: deps.Comments, tasks: deps.Tasks, teams: deps.Teams, notifier: deps.Notifier}, nil
+}
+
+// Create adds a comment by userID to a task of one of the user's teams.
+func (s *CommentService) Create(ctx context.Context, userID, taskID int64, in port.CreateCommentInput) (*domain.Comment, error) {
+	content := strings.TrimSpace(in.Content)
+	errs := fieldErrors{}
+	errs.checkRequiredText("content", content, maxCommentChars)
+	if err := errs.err(); err != nil {
+		return nil, err
 	}
 
-	task, err := s.taskRepo.GetByID(ctx, taskID)
+	task, err := loadTask(ctx, s.tasks, s.teams, taskID, userID)
+	if err != nil {
+		return nil, err
+	}
+	id, err := s.comments.Create(ctx, &domain.Comment{TaskID: taskID, UserID: userID, Content: content})
+	if err != nil {
+		return nil, err
+	}
+	// The row is read back for the timestamps the database assigned.
+	comment, err := s.comments.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
 	}
 
-	member, err := s.teamRepo.GetMember(ctx, task.TeamID, userID)
-	if err != nil {
-		return nil, err
+	if err := s.notifier.NotifyCommentAdded(ctx, comment, task); err != nil {
+		logger.FromContext(ctx).Warn("comment notification failed", "task_id", taskID, "comment_id", id, "error", err)
 	}
-	if member == nil {
-		return nil, errNotTeamMember()
-	}
-
-	comment := &domain.TaskComment{
-		TaskID:  taskID,
-		UserID:  userID,
-		Content: req.Content,
-	}
-
-	id, err := s.commentRepo.Create(ctx, comment)
-	if err != nil {
-		return nil, err
-	}
-	comment.ID = id
-
-	_ = s.notifSvc.NotifyCommentAdded(ctx, comment, task)
-
 	return comment, nil
 }
 
-func (s *CommentServiceImpl) ListByTaskID(ctx context.Context, userID, taskID int64) ([]domain.TaskComment, error) {
-	task, err := s.taskRepo.GetByID(ctx, taskID)
-	if err != nil {
+// List returns the comments of a task to a member of its team.
+func (s *CommentService) List(ctx context.Context, userID, taskID int64) ([]domain.Comment, error) {
+	if _, err := loadTask(ctx, s.tasks, s.teams, taskID, userID); err != nil {
 		return nil, err
 	}
-
-	member, err := s.teamRepo.GetMember(ctx, task.TeamID, userID)
-	if err != nil {
-		return nil, err
-	}
-	if member == nil {
-		return nil, errNotTeamMember()
-	}
-
-	return s.commentRepo.ListByTaskID(ctx, taskID)
+	return s.comments.ListByTask(ctx, taskID)
 }

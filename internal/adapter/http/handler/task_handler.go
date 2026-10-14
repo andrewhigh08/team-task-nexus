@@ -1,150 +1,180 @@
 package handler
 
 import (
-	"encoding/json"
 	"net/http"
-	"strconv"
-
-	"github.com/go-chi/chi/v5"
 
 	"github.com/andrewhigh08/team-task-nexus/internal/adapter/http/response"
 	"github.com/andrewhigh08/team-task-nexus/internal/domain"
-	"github.com/andrewhigh08/team-task-nexus/internal/pkg/apperror"
 	"github.com/andrewhigh08/team-task-nexus/internal/port"
 )
 
-// TaskHandler serves tasks and their history.
+// TaskHandler serves tasks, their history and the orphaned assignments of a team.
 type TaskHandler struct {
-	taskSvc port.TaskService
+	tasks port.TaskService
 }
 
-// NewTaskHandler returns a TaskHandler backed by taskSvc.
-func NewTaskHandler(taskSvc port.TaskService) *TaskHandler {
-	return &TaskHandler{taskSvc: taskSvc}
+// NewTaskHandler returns a TaskHandler backed by tasks.
+func NewTaskHandler(tasks port.TaskService) *TaskHandler {
+	return &TaskHandler{tasks: tasks}
 }
 
-// Create adds a task to a team.
+// Create adds a task to a team of the caller and answers 201 with it.
 func (h *TaskHandler) Create(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
 		return
 	}
-
-	var req domain.CreateTaskRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		response.Error(w, r, apperror.BadRequest("invalid request body"))
+	var req createTaskRequest
+	if err := decodeJSON(r, &req); err != nil {
+		response.Error(w, r, err)
 		return
 	}
-
-	task, err := h.taskSvc.Create(r.Context(), userID, req)
+	in, err := req.toInput()
 	if err != nil {
 		response.Error(w, r, err)
 		return
 	}
 
-	response.JSON(w, http.StatusCreated, task)
+	task, err := h.tasks.Create(r.Context(), userID, in)
+	if err != nil {
+		response.Error(w, r, err)
+		return
+	}
+	response.JSON(w, http.StatusCreated, newTaskResponse(*task))
 }
 
-// List returns one page of tasks matching the query parameters.
+// List returns a page of the tasks of the caller's teams, narrowed by the query parameters
+// team_id, status and assignee_id and paged by page and page_size.
 func (h *TaskHandler) List(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
 		return
 	}
-
-	filter := domain.TaskFilter{
-		Page:     1,
-		PageSize: 20,
-	}
-
-	if v := r.URL.Query().Get("team_id"); v != "" {
-		if id, err := strconv.ParseInt(v, 10, 64); err == nil {
-			filter.TeamID = id
-		}
-	}
-	if v := r.URL.Query().Get("status"); v != "" {
-		filter.Status = v
-	}
-	if v := r.URL.Query().Get("assignee_id"); v != "" {
-		if id, err := strconv.ParseInt(v, 10, 64); err == nil {
-			filter.AssigneeID = id
-		}
-	}
-	if v := r.URL.Query().Get("page"); v != "" {
-		if p, err := strconv.Atoi(v); err == nil {
-			filter.Page = p
-		}
-	}
-	if v := r.URL.Query().Get("page_size"); v != "" {
-		if ps, err := strconv.Atoi(v); err == nil {
-			filter.PageSize = ps
-		}
-	}
-
-	result, err := h.taskSvc.List(r.Context(), userID, filter)
+	q, err := taskQuery(r, userID)
 	if err != nil {
 		response.Error(w, r, err)
 		return
 	}
 
-	response.JSON(w, http.StatusOK, result)
+	page, err := h.tasks.List(r.Context(), q)
+	if err != nil {
+		response.Error(w, r, err)
+		return
+	}
+	response.JSONWithMeta(w, mapAll(page.Tasks, newTaskResponse), response.Meta{
+		Page:       page.Page,
+		PageSize:   page.PageSize,
+		Total:      page.Total,
+		TotalPages: page.TotalPages,
+	})
 }
 
-// Update changes the task in the path.
+// taskQuery reads the task list query parameters. Absent ones are zero, which the service
+// treats as "any" or as the default; malformed ones are rejected rather than ignored.
+func taskQuery(r *http.Request, viewerID int64) (domain.TaskQuery, error) {
+	q := domain.TaskQuery{ViewerID: viewerID, Status: domain.TaskStatus(r.URL.Query().Get("status"))}
+	var err error
+	if q.TeamID, err = queryID(r, "team_id"); err != nil {
+		return domain.TaskQuery{}, err
+	}
+	if q.AssigneeID, err = queryID(r, "assignee_id"); err != nil {
+		return domain.TaskQuery{}, err
+	}
+	if q.Page, err = queryInt(r, "page"); err != nil {
+		return domain.TaskQuery{}, err
+	}
+	if q.PageSize, err = queryInt(r, "page_size"); err != nil {
+		return domain.TaskQuery{}, err
+	}
+	return q, nil
+}
+
+// Get returns the task in the path.
+func (h *TaskHandler) Get(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	taskID, err := pathID(r, "id")
+	if err != nil {
+		response.Error(w, r, err)
+		return
+	}
+
+	task, err := h.tasks.Get(r.Context(), userID, taskID)
+	if err != nil {
+		response.Error(w, r, err)
+		return
+	}
+	response.JSON(w, http.StatusOK, newTaskResponse(*task))
+}
+
+// Update applies a partial update to the task in the path and returns the result.
 func (h *TaskHandler) Update(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
 		return
 	}
-	taskID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	taskID, err := pathID(r, "id")
 	if err != nil {
-		response.Error(w, r, apperror.BadRequest("invalid task id"))
+		response.Error(w, r, err)
 		return
 	}
-
-	var req domain.UpdateTaskRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		response.Error(w, r, apperror.BadRequest("invalid request body"))
+	var req updateTaskRequest
+	if err = decodeJSON(r, &req); err != nil {
+		response.Error(w, r, err)
 		return
 	}
-
-	task, err := h.taskSvc.Update(r.Context(), userID, taskID, req)
+	in, err := req.toInput()
 	if err != nil {
 		response.Error(w, r, err)
 		return
 	}
 
-	response.JSON(w, http.StatusOK, task)
+	task, err := h.tasks.Update(r.Context(), userID, taskID, in)
+	if err != nil {
+		response.Error(w, r, err)
+		return
+	}
+	response.JSON(w, http.StatusOK, newTaskResponse(*task))
 }
 
-// GetHistory returns the change history of the task in the path.
-func (h *TaskHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
+// History returns the change history of the task in the path, newest first.
+func (h *TaskHandler) History(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
 		return
 	}
-	taskID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	if err != nil {
-		response.Error(w, r, apperror.BadRequest("invalid task id"))
-		return
-	}
-
-	history, err := h.taskSvc.GetHistory(r.Context(), userID, taskID)
+	taskID, err := pathID(r, "id")
 	if err != nil {
 		response.Error(w, r, err)
 		return
 	}
 
-	response.JSON(w, http.StatusOK, history)
+	changes, err := h.tasks.History(r.Context(), userID, taskID)
+	if err != nil {
+		response.Error(w, r, err)
+		return
+	}
+	response.JSON(w, http.StatusOK, mapAll(changes, newTaskChangeResponse))
 }
 
-// GetOrphanedAssignees returns the tasks assigned to users outside the task's team.
-func (h *TaskHandler) GetOrphanedAssignees(w http.ResponseWriter, r *http.Request) {
-	result, err := h.taskSvc.GetOrphanedAssignees(r.Context())
+// ListOrphaned returns the tasks of the team in the path that are assigned to former members.
+func (h *TaskHandler) ListOrphaned(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	teamID, err := pathID(r, "id")
 	if err != nil {
 		response.Error(w, r, err)
 		return
 	}
 
-	response.JSON(w, http.StatusOK, result)
+	orphaned, err := h.tasks.ListOrphaned(r.Context(), userID, teamID)
+	if err != nil {
+		response.Error(w, r, err)
+		return
+	}
+	response.JSON(w, http.StatusOK, mapAll(orphaned, newOrphanedAssignmentResponse))
 }

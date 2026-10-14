@@ -42,18 +42,18 @@ func (m *MockTaskCache) EXPECT() *MockTaskCacheMockRecorder {
 }
 
 // GetTaskList mocks base method.
-func (m *MockTaskCache) GetTaskList(ctx context.Context, filter domain.TaskFilter) (*domain.TaskListResponse, error) {
+func (m *MockTaskCache) GetTaskList(ctx context.Context, q domain.TaskQuery) (*domain.TaskPage, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetTaskList", ctx, filter)
-	ret0, _ := ret[0].(*domain.TaskListResponse)
+	ret := m.ctrl.Call(m, "GetTaskList", ctx, q)
+	ret0, _ := ret[0].(*domain.TaskPage)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetTaskList indicates an expected call of GetTaskList.
-func (mr *MockTaskCacheMockRecorder) GetTaskList(ctx, filter any) *gomock.Call {
+func (mr *MockTaskCacheMockRecorder) GetTaskList(ctx, q any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTaskList", reflect.TypeOf((*MockTaskCache)(nil).GetTaskList), ctx, filter)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTaskList", reflect.TypeOf((*MockTaskCache)(nil).GetTaskList), ctx, q)
 }
 
 // InvalidateTeam mocks base method.
@@ -71,17 +71,17 @@ func (mr *MockTaskCacheMockRecorder) InvalidateTeam(ctx, teamID any) *gomock.Cal
 }
 
 // SetTaskList mocks base method.
-func (m *MockTaskCache) SetTaskList(ctx context.Context, filter domain.TaskFilter, response *domain.TaskListResponse) error {
+func (m *MockTaskCache) SetTaskList(ctx context.Context, q domain.TaskQuery, page *domain.TaskPage) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "SetTaskList", ctx, filter, response)
+	ret := m.ctrl.Call(m, "SetTaskList", ctx, q, page)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // SetTaskList indicates an expected call of SetTaskList.
-func (mr *MockTaskCacheMockRecorder) SetTaskList(ctx, filter, response any) *gomock.Call {
+func (mr *MockTaskCacheMockRecorder) SetTaskList(ctx, q, page any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetTaskList", reflect.TypeOf((*MockTaskCache)(nil).SetTaskList), ctx, filter, response)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetTaskList", reflect.TypeOf((*MockTaskCache)(nil).SetTaskList), ctx, q, page)
 }
 
 // MockRateLimiter is a mock of RateLimiter interface.

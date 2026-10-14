@@ -2,51 +2,85 @@ package domain
 
 import "time"
 
+// TeamRole is the role of a user in a team.
 type TeamRole string
 
+// Team roles. Every team has exactly one owner, its creator; ownership cannot be transferred.
 const (
 	TeamRoleOwner  TeamRole = "owner"
 	TeamRoleAdmin  TeamRole = "admin"
 	TeamRoleMember TeamRole = "member"
 )
 
+// Valid reports whether r is one of the defined roles.
+func (r TeamRole) Valid() bool {
+	switch r {
+	case TeamRoleOwner, TeamRoleAdmin, TeamRoleMember:
+		return true
+	}
+	return false
+}
+
+// CanManageMembers reports whether r may add and remove members and see the team's
+// orphaned assignments.
+func (r TeamRole) CanManageMembers() bool {
+	return r == TeamRoleOwner || r == TeamRoleAdmin
+}
+
+// Team is a group of users that share tasks.
 type Team struct {
-	ID          int64     `json:"id" db:"id"`
-	Name        string    `json:"name" db:"name"`
-	Description string    `json:"description" db:"description"`
-	OwnerID     int64     `json:"owner_id" db:"owner_id"`
-	CreatedAt   time.Time `json:"created_at" db:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at" db:"updated_at"`
+	ID          int64
+	Name        string
+	Description string
+	OwnerID     int64
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
+// TeamSummary is a team as listed for one of its members: the team plus that member's role.
+type TeamSummary struct {
+	Team
+	Role TeamRole
+}
+
+// TeamMember is the membership of a user in a team.
 type TeamMember struct {
-	TeamID int64    `json:"team_id" db:"team_id"`
-	UserID int64    `json:"user_id" db:"user_id"`
-	Role   TeamRole `json:"role" db:"role"`
+	TeamID int64
+	UserID int64
+	Role   TeamRole
 }
 
-type CreateTeamRequest struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
+// MemberProfile is a team member together with the account details other members may see.
+type MemberProfile struct {
+	UserID   int64
+	Email    string
+	FullName string
+	Role     TeamRole
 }
 
-type InviteRequest struct {
-	Email string `json:"email"`
-	Role  string `json:"role"`
-}
-
+// TeamStats summarizes the activity of a team. DoneLast7Days counts the tasks completed in the
+// seven days before the statistics were taken.
 type TeamStats struct {
-	ID          int64  `json:"id" db:"id"`
-	Name        string `json:"name" db:"name"`
-	MemberCount int    `json:"member_count" db:"member_count"`
-	DoneLast7D  int    `json:"done_last_7d" db:"done_last_7d"`
+	TeamID        int64
+	Name          string
+	MemberCount   int
+	OpenTasks     int
+	DoneLast7Days int
 }
 
+// TopContributor is a team member ranked by the number of tasks they completed. Members with
+// the same count share a rank, and the next rank skips accordingly (1, 1, 3).
 type TopContributor struct {
-	UserID       int64  `json:"user_id" db:"id"`
-	FullName     string `json:"full_name" db:"full_name"`
-	TeamID       int64  `json:"team_id" db:"team_id"`
-	TeamName     string `json:"team_name" db:"team_name"`
-	TasksCreated int    `json:"tasks_created" db:"tasks_created"`
-	Rank         int    `json:"rank" db:"rn"`
+	UserID         int64
+	FullName       string
+	TasksCompleted int
+	Rank           int
+}
+
+// OrphanedAssignment is a task assigned to a user who has since left the task's team.
+type OrphanedAssignment struct {
+	TaskID       int64
+	TaskTitle    string
+	AssigneeID   int64
+	AssigneeName string
 }

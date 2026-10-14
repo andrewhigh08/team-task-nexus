@@ -21,7 +21,7 @@ func TestNotificationService_NotifyTaskAssigned(t *testing.T) {
 func TestNotificationService_NotifyCommentAdded(t *testing.T) {
 	svc := NewNotificationService()
 
-	comment := &domain.TaskComment{ID: 1, TaskID: 1, UserID: 1}
+	comment := &domain.Comment{ID: 1, TaskID: 1, UserID: 1}
 	task := &domain.Task{ID: 1, Title: "Test Task"}
 
 	err := svc.NotifyCommentAdded(context.Background(), comment, task)

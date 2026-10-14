@@ -16,14 +16,10 @@ func (a *App) newRouter() (http.Handler, error) {
 	userRepo := mysqlrepo.NewUserRepo(a.db)
 	teamRepo := mysqlrepo.NewTeamRepo(a.db)
 	taskRepo := mysqlrepo.NewTaskRepo(a.db)
-	historyRepo := mysqlrepo.NewTaskHistoryRepo(a.db)
-	commentRepo := mysqlrepo.NewCommentRepo(a.db)
-	txManager := mysqlrepo.NewTransactionManager(a.db)
-
-	taskCache := redisstore.NewTaskCache(a.rdb)
+	txManager := mysqlrepo.NewTxManager(a.db)
 	rateLimiter := redisstore.NewRateLimiter(a.rdb, a.cfg.RateLimit.APIPerMinute)
+	notifier := service.NewNotificationService()
 
-	notifSvc := service.NewNotificationService()
 	authSvc, err := service.NewAuthService(userRepo, service.AuthConfig{
 		Secret:     []byte(a.cfg.JWT.Secret),
 		Issuer:     a.cfg.JWT.Issuer,
@@ -33,9 +29,31 @@ func (a *App) newRouter() (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
-	teamSvc := service.NewTeamService(teamRepo, userRepo, txManager, notifSvc)
-	taskSvc := service.NewTaskService(taskRepo, teamRepo, userRepo, historyRepo, taskCache, txManager, notifSvc)
-	commentSvc := service.NewCommentService(commentRepo, taskRepo, teamRepo, notifSvc)
+	teamSvc, err := service.NewTeamService(service.TeamDeps{Teams: teamRepo, Users: userRepo, Tx: txManager})
+	if err != nil {
+		return nil, err
+	}
+	taskSvc, err := service.NewTaskService(service.TaskDeps{
+		Tasks:    taskRepo,
+		History:  mysqlrepo.NewTaskHistoryRepo(a.db),
+		Teams:    teamRepo,
+		Users:    userRepo,
+		Cache:    redisstore.NewTaskCache(a.rdb),
+		Tx:       txManager,
+		Notifier: notifier,
+	})
+	if err != nil {
+		return nil, err
+	}
+	commentSvc, err := service.NewCommentService(service.CommentDeps{
+		Comments: mysqlrepo.NewCommentRepo(a.db),
+		Tasks:    taskRepo,
+		Teams:    teamRepo,
+		Notifier: notifier,
+	})
+	if err != nil {
+		return nil, err
+	}
 
 	return apphttp.NewRouter(apphttp.RouterDeps{
 		AuthHandler:    handler.NewAuthHandler(authSvc),

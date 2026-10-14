@@ -2,61 +2,74 @@ package service
 
 import (
 	"context"
+	"errors"
+	"strings"
+	"time"
 
 	"github.com/andrewhigh08/team-task-nexus/internal/domain"
 	"github.com/andrewhigh08/team-task-nexus/internal/pkg/apperror"
 	"github.com/andrewhigh08/team-task-nexus/internal/port"
 )
 
-type TeamServiceImpl struct {
-	teamRepo  port.TeamRepository
-	userRepo  port.UserRepository
-	txManager port.TransactionManager
-	notifSvc  port.NotificationService
+// Analytics windows. Stats count the tasks completed in the last statsWindow; contributors
+// are ranked by the tasks they completed in the last contributorsWindow.
+const (
+	statsWindow          = 7 * 24 * time.Hour
+	contributorsWindow   = 30 * 24 * time.Hour
+	topContributorsLimit = 3
+)
+
+// TeamDeps lists the collaborators of TeamService. A nil Clock means time.Now.
+type TeamDeps struct {
+	Teams port.TeamRepository
+	Users port.UserRepository
+	Tx    port.TxManager
+	Clock func() time.Time
 }
 
-func NewTeamService(
-	teamRepo port.TeamRepository,
-	userRepo port.UserRepository,
-	txManager port.TransactionManager,
-	notifSvc port.NotificationService,
-) *TeamServiceImpl {
-	return &TeamServiceImpl{
-		teamRepo:  teamRepo,
-		userRepo:  userRepo,
-		txManager: txManager,
-		notifSvc:  notifSvc,
+// TeamService implements port.TeamService.
+type TeamService struct {
+	teams port.TeamRepository
+	users port.UserRepository
+	tx    port.TxManager
+	now   func() time.Time
+}
+
+// NewTeamService validates deps and returns a TeamService.
+func NewTeamService(deps TeamDeps) (*TeamService, error) {
+	var missing string
+	switch {
+	case deps.Teams == nil:
+		missing = "team repository"
+	case deps.Users == nil:
+		missing = "user repository"
+	case deps.Tx == nil:
+		missing = "transaction manager"
 	}
+	if missing != "" {
+		return nil, errors.New("team service: " + missing + " is required")
+	}
+	if deps.Clock == nil {
+		deps.Clock = time.Now
+	}
+	return &TeamService{teams: deps.Teams, users: deps.Users, tx: deps.Tx, now: deps.Clock}, nil
 }
 
-func (s *TeamServiceImpl) Create(ctx context.Context, userID int64, req domain.CreateTeamRequest) (*domain.Team, error) {
-	if req.Name == "" {
-		return nil, apperror.BadRequest("team name is required")
+// Create creates a team and makes userID its owner, in one transaction.
+func (s *TeamService) Create(ctx context.Context, userID int64, in port.CreateTeamInput) (*domain.Team, error) {
+	name := strings.TrimSpace(in.Name)
+	description := strings.TrimSpace(in.Description)
+	errs := fieldErrors{}
+	errs.checkRequiredText("name", name, maxTeamNameChars)
+	errs.checkOptionalText("description", description, maxTeamDescriptionChars)
+	if err := errs.err(); err != nil {
+		return nil, err
 	}
 
 	var team *domain.Team
-	err := s.txManager.WithTransaction(ctx, func(ctx context.Context) error {
-		t := &domain.Team{
-			Name:        req.Name,
-			Description: req.Description,
-			OwnerID:     userID,
-		}
-		id, err := s.teamRepo.Create(ctx, t)
-		if err != nil {
-			return err
-		}
-		t.ID = id
-
-		err = s.teamRepo.AddMember(ctx, &domain.TeamMember{
-			TeamID: id,
-			UserID: userID,
-			Role:   domain.TeamRoleOwner,
-		})
-		if err != nil {
-			return err
-		}
-
-		team, err = s.teamRepo.GetByID(ctx, id)
+	err := s.tx.WithinTx(ctx, func(ctx context.Context) error {
+		var err error
+		team, err = s.createOwned(ctx, &domain.Team{Name: name, Description: description, OwnerID: userID})
 		return err
 	})
 	if err != nil {
@@ -65,65 +78,119 @@ func (s *TeamServiceImpl) Create(ctx context.Context, userID int64, req domain.C
 	return team, nil
 }
 
-func (s *TeamServiceImpl) GetByID(ctx context.Context, userID, teamID int64) (*domain.Team, error) {
-	member, err := s.teamRepo.GetMember(ctx, teamID, userID)
+// createOwned inserts team with its owner as the first member and returns it as stored.
+func (s *TeamService) createOwned(ctx context.Context, team *domain.Team) (*domain.Team, error) {
+	id, err := s.teams.Create(ctx, team)
 	if err != nil {
 		return nil, err
 	}
-	if member == nil {
-		return nil, errNotTeamMember()
+	owner := domain.TeamMember{TeamID: id, UserID: team.OwnerID, Role: domain.TeamRoleOwner}
+	if err := s.teams.AddMember(ctx, owner); err != nil {
+		return nil, err
 	}
-	return s.teamRepo.GetByID(ctx, teamID)
+	return s.teams.GetByID(ctx, id)
 }
 
-func (s *TeamServiceImpl) ListByUserID(ctx context.Context, userID int64) ([]domain.Team, error) {
-	return s.teamRepo.ListByUserID(ctx, userID)
+// Get returns the team to one of its members.
+func (s *TeamService) Get(ctx context.Context, userID, teamID int64) (*domain.Team, error) {
+	if _, err := requireMember(ctx, s.teams, teamID, userID); err != nil {
+		return nil, err
+	}
+	return s.teams.GetByID(ctx, teamID)
 }
 
-func (s *TeamServiceImpl) InviteUser(ctx context.Context, inviterID, teamID int64, req domain.InviteRequest) error {
-	if req.Email == "" {
-		return apperror.BadRequest("email is required")
+// List returns the teams of userID.
+func (s *TeamService) List(ctx context.Context, userID int64) ([]domain.TeamSummary, error) {
+	return s.teams.ListForUser(ctx, userID)
+}
+
+// ListMembers returns the members of the team to one of its members.
+func (s *TeamService) ListMembers(ctx context.Context, userID, teamID int64) ([]domain.MemberProfile, error) {
+	if _, err := requireMember(ctx, s.teams, teamID, userID); err != nil {
+		return nil, err
+	}
+	return s.teams.ListMembers(ctx, teamID)
+}
+
+// AddMember adds the registered user with in.Email to the team.
+func (s *TeamService) AddMember(ctx context.Context, userID, teamID int64, in port.AddMemberInput) (*domain.MemberProfile, error) {
+	email := normalizeEmail(in.Email)
+	role := in.Role
+	if role == "" {
+		role = domain.TeamRoleMember
+	}
+	errs := fieldErrors{}
+	errs.checkEmail("email", email)
+	if role != domain.TeamRoleAdmin && role != domain.TeamRoleMember {
+		errs.add("role", "must be admin or member")
+	}
+	if err := errs.err(); err != nil {
+		return nil, err
 	}
 
-	member, err := s.teamRepo.GetMember(ctx, teamID, inviterID)
+	caller, err := requireManager(ctx, s.teams, teamID, userID)
+	if err != nil {
+		return nil, err
+	}
+	if role == domain.TeamRoleAdmin && caller.Role != domain.TeamRoleOwner {
+		return nil, apperror.Forbidden("only the team owner may add admins")
+	}
+	user, err := s.users.GetByEmail(ctx, email)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.teams.AddMember(ctx, domain.TeamMember{TeamID: teamID, UserID: user.ID, Role: role}); err != nil {
+		return nil, err
+	}
+	return &domain.MemberProfile{UserID: user.ID, Email: user.Email, FullName: user.FullName, Role: role}, nil
+}
+
+// RemoveMember removes memberID from the team. The removed member's task assignments are
+// kept; ListOrphaned reports them so that they can be reassigned.
+func (s *TeamService) RemoveMember(ctx context.Context, userID, teamID, memberID int64) error {
+	caller, err := requireMember(ctx, s.teams, teamID, userID)
 	if err != nil {
 		return err
 	}
-	if member == nil {
-		return errNotTeamMember()
+	if err := s.checkRemoval(ctx, caller, memberID); err != nil {
+		return err
 	}
-	if member.Role != domain.TeamRoleOwner && member.Role != domain.TeamRoleAdmin {
-		return apperror.Forbidden("insufficient role for this action")
-	}
-
-	invitee, err := s.userRepo.GetByEmail(ctx, req.Email)
-	if err != nil {
-		return apperror.NotFound("user", req.Email)
-	}
-
-	role := domain.TeamRoleMember
-	if req.Role == string(domain.TeamRoleAdmin) {
-		role = domain.TeamRoleAdmin
-	}
-
-	return s.teamRepo.AddMember(ctx, &domain.TeamMember{
-		TeamID: teamID,
-		UserID: invitee.ID,
-		Role:   role,
-	})
+	return s.teams.RemoveMember(ctx, teamID, memberID)
 }
 
-func (s *TeamServiceImpl) GetStats(ctx context.Context, userID int64) ([]domain.TeamStats, error) {
-	return s.teamRepo.GetStats(ctx, userID)
+// checkRemoval decides whether caller may remove memberID from caller's team. Anyone but the
+// owner may leave; the owner cannot, since ownership cannot be transferred. The owner may
+// remove anyone else, an admin only plain members.
+func (s *TeamService) checkRemoval(ctx context.Context, caller *domain.TeamMember, memberID int64) error {
+	if memberID == caller.UserID {
+		if caller.Role == domain.TeamRoleOwner {
+			return apperror.Forbidden("the team owner cannot leave the team")
+		}
+		return nil
+	}
+	if !caller.Role.CanManageMembers() {
+		return errManagerRequired()
+	}
+	target, err := s.teams.GetMember(ctx, caller.TeamID, memberID)
+	if err != nil {
+		return err
+	}
+	if caller.Role == domain.TeamRoleAdmin && target.Role != domain.TeamRoleMember {
+		return apperror.Forbidden("admins may remove only members")
+	}
+	return nil
 }
 
-func (s *TeamServiceImpl) GetTopContributors(ctx context.Context, userID, teamID int64) ([]domain.TopContributor, error) {
-	member, err := s.teamRepo.GetMember(ctx, teamID, userID)
-	if err != nil {
+// Stats summarizes every team of userID over the last statsWindow.
+func (s *TeamService) Stats(ctx context.Context, userID int64) ([]domain.TeamStats, error) {
+	return s.teams.Stats(ctx, userID, s.now().Add(-statsWindow))
+}
+
+// TopContributors returns the topContributorsLimit best ranked members of the team over the
+// last contributorsWindow, to one of its members.
+func (s *TeamService) TopContributors(ctx context.Context, userID, teamID int64) ([]domain.TopContributor, error) {
+	if _, err := requireMember(ctx, s.teams, teamID, userID); err != nil {
 		return nil, err
 	}
-	if member == nil {
-		return nil, errNotTeamMember()
-	}
-	return s.teamRepo.GetTopContributors(ctx, teamID)
+	return s.teams.TopContributors(ctx, teamID, s.now().Add(-contributorsWindow), topContributorsLimit)
 }

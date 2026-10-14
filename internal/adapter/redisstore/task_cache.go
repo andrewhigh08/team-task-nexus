@@ -25,14 +25,16 @@ func NewTaskCache(client *redis.Client) *TaskCache {
 	return &TaskCache{client: client}
 }
 
-func (c *TaskCache) cacheKey(filter domain.TaskFilter) string {
+// cacheKey identifies the page q selects within its team. The viewer is not part of it: every
+// member of a team sees the same tasks of that team.
+func (c *TaskCache) cacheKey(q domain.TaskQuery) string {
 	return fmt.Sprintf("tasks:team:%d:status:%s:assignee:%d:page:%d:size:%d",
-		filter.TeamID, filter.Status, filter.AssigneeID, filter.Page, filter.PageSize)
+		q.TeamID, q.Status, q.AssigneeID, q.Page, q.PageSize)
 }
 
-// GetTaskList returns the cached page for filter, or nil when there is none.
-func (c *TaskCache) GetTaskList(ctx context.Context, filter domain.TaskFilter) (*domain.TaskListResponse, error) {
-	data, err := c.client.Get(ctx, c.cacheKey(filter)).Bytes()
+// GetTaskList returns the cached page for q, or nil when there is none.
+func (c *TaskCache) GetTaskList(ctx context.Context, q domain.TaskQuery) (*domain.TaskPage, error) {
+	data, err := c.client.Get(ctx, c.cacheKey(q)).Bytes()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			return nil, nil
@@ -40,20 +42,20 @@ func (c *TaskCache) GetTaskList(ctx context.Context, filter domain.TaskFilter) (
 		return nil, err
 	}
 
-	var response domain.TaskListResponse
-	if err := json.Unmarshal(data, &response); err != nil {
+	var page domain.TaskPage
+	if err := json.Unmarshal(data, &page); err != nil {
 		return nil, err
 	}
-	return &response, nil
+	return &page, nil
 }
 
-// SetTaskList caches the page for filter.
-func (c *TaskCache) SetTaskList(ctx context.Context, filter domain.TaskFilter, response *domain.TaskListResponse) error {
-	data, err := json.Marshal(response)
+// SetTaskList caches page as the result of q.
+func (c *TaskCache) SetTaskList(ctx context.Context, q domain.TaskQuery, page *domain.TaskPage) error {
+	data, err := json.Marshal(page)
 	if err != nil {
 		return err
 	}
-	return c.client.Set(ctx, c.cacheKey(filter), data, taskCacheTTL).Err()
+	return c.client.Set(ctx, c.cacheKey(q), data, taskCacheTTL).Err()
 }
 
 // InvalidateTeam drops every cached page of the team's tasks.
