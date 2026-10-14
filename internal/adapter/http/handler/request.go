@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/andrewhigh08/team-task-nexus/internal/adapter/http/response"
+	"github.com/andrewhigh08/team-task-nexus/internal/domain"
 	"github.com/andrewhigh08/team-task-nexus/internal/pkg/apperror"
 )
 
@@ -99,6 +100,20 @@ func queryInt(r *http.Request, name string) (int, error) {
 		return 0, invalidField(name, msgPositive)
 	}
 	return n, nil
+}
+
+// pageQuery reads the paging query parameters page and page_size. Absent ones are zero, which
+// the services replace with the first page and the default size.
+func pageQuery(r *http.Request) (domain.PageRequest, error) {
+	page, err := queryInt(r, "page")
+	if err != nil {
+		return domain.PageRequest{}, err
+	}
+	pageSize, err := queryInt(r, "page_size")
+	if err != nil {
+		return domain.PageRequest{}, err
+	}
+	return domain.PageRequest{Page: page, PageSize: pageSize}, nil
 }
 
 // parseDate parses a calendar date in YYYY-MM-DD form as midnight UTC.

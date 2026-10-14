@@ -54,18 +54,32 @@ func (r *CommentRepo) GetByID(ctx context.Context, id int64) (*domain.Comment, e
 	return &comment, nil
 }
 
-// ListByTask returns the comments of the task, oldest first.
-func (r *CommentRepo) ListByTask(ctx context.Context, taskID int64) ([]domain.Comment, error) {
+// ListByTask returns page p of the comments of the task, oldest first, and the number of all
+// its comments. Comments posted within the same second share their timestamp, so the id breaks
+// the tie and keeps the pages from overlapping.
+func (r *CommentRepo) ListByTask(ctx context.Context, taskID int64, p domain.PageRequest) ([]domain.Comment, int, error) {
+	limit, offset, err := pageWindow(p, "list comments")
+	if err != nil {
+		return nil, 0, err
+	}
+	conn := getQuerier(ctx, r.db)
+
+	var total int
+	if err = conn.GetContext(ctx, &total, "SELECT COUNT(*) FROM task_comments WHERE task_id = ?", taskID); err != nil {
+		return nil, 0, apperror.Internal("count comments", err)
+	}
+
 	var rows []commentRow
-	err := getQuerier(ctx, r.db).SelectContext(ctx, &rows,
-		"SELECT "+commentColumns+" FROM task_comments WHERE task_id = ? ORDER BY created_at ASC, id ASC", taskID,
+	err = conn.SelectContext(ctx, &rows,
+		"SELECT "+commentColumns+" FROM task_comments WHERE task_id = ? ORDER BY created_at ASC, id ASC LIMIT ? OFFSET ?",
+		taskID, limit, offset,
 	)
 	if err != nil {
-		return nil, apperror.Internal("list comments", err)
+		return nil, 0, apperror.Internal("list comments", err)
 	}
 	comments := make([]domain.Comment, 0, len(rows))
 	for _, row := range rows {
 		comments = append(comments, domain.Comment(row))
 	}
-	return comments, nil
+	return comments, total, nil
 }

@@ -397,18 +397,19 @@ func (mr *MockTaskHistoryRepositoryMockRecorder) Add(ctx, changes any) *gomock.C
 }
 
 // ListByTask mocks base method.
-func (m *MockTaskHistoryRepository) ListByTask(ctx context.Context, taskID int64) ([]domain.TaskChange, error) {
+func (m *MockTaskHistoryRepository) ListByTask(ctx context.Context, taskID int64, p domain.PageRequest) ([]domain.TaskChange, int, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListByTask", ctx, taskID)
+	ret := m.ctrl.Call(m, "ListByTask", ctx, taskID, p)
 	ret0, _ := ret[0].([]domain.TaskChange)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
+	ret1, _ := ret[1].(int)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
 }
 
 // ListByTask indicates an expected call of ListByTask.
-func (mr *MockTaskHistoryRepositoryMockRecorder) ListByTask(ctx, taskID any) *gomock.Call {
+func (mr *MockTaskHistoryRepositoryMockRecorder) ListByTask(ctx, taskID, p any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListByTask", reflect.TypeOf((*MockTaskHistoryRepository)(nil).ListByTask), ctx, taskID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListByTask", reflect.TypeOf((*MockTaskHistoryRepository)(nil).ListByTask), ctx, taskID, p)
 }
 
 // MockCommentRepository is a mock of CommentRepository interface.
@@ -466,16 +467,17 @@ func (mr *MockCommentRepositoryMockRecorder) GetByID(ctx, id any) *gomock.Call {
 }
 
 // ListByTask mocks base method.
-func (m *MockCommentRepository) ListByTask(ctx context.Context, taskID int64) ([]domain.Comment, error) {
+func (m *MockCommentRepository) ListByTask(ctx context.Context, taskID int64, p domain.PageRequest) ([]domain.Comment, int, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListByTask", ctx, taskID)
+	ret := m.ctrl.Call(m, "ListByTask", ctx, taskID, p)
 	ret0, _ := ret[0].([]domain.Comment)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
+	ret1, _ := ret[1].(int)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
 }
 
 // ListByTask indicates an expected call of ListByTask.
-func (mr *MockCommentRepositoryMockRecorder) ListByTask(ctx, taskID any) *gomock.Call {
+func (mr *MockCommentRepositoryMockRecorder) ListByTask(ctx, taskID, p any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListByTask", reflect.TypeOf((*MockCommentRepository)(nil).ListByTask), ctx, taskID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListByTask", reflect.TypeOf((*MockCommentRepository)(nil).ListByTask), ctx, taskID, p)
 }

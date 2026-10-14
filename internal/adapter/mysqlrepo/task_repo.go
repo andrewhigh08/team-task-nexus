@@ -134,22 +134,23 @@ func (r *TaskRepo) Update(ctx context.Context, task *domain.Task) error {
 // List returns the page of tasks q selects, newest first, and the number of all matching
 // tasks. Only tasks of the teams q.ViewerID is a member of are selected.
 func (r *TaskRepo) List(ctx context.Context, q domain.TaskQuery) ([]domain.Task, int, error) {
-	if q.Page < 1 || q.PageSize < 1 {
-		return nil, 0, apperror.Internal("list tasks", fmt.Errorf("invalid page %d of size %d", q.Page, q.PageSize))
+	limit, offset, err := pageWindow(domain.PageRequest{Page: q.Page, PageSize: q.PageSize}, "list tasks")
+	if err != nil {
+		return nil, 0, err
 	}
 	where, args := taskListFilter(q)
 	conn := getQuerier(ctx, r.db)
 
 	var total int
-	if err := conn.GetContext(ctx, &total, "SELECT COUNT(*) FROM tasks WHERE "+where, args...); err != nil {
+	if err = conn.GetContext(ctx, &total, "SELECT COUNT(*) FROM tasks WHERE "+where, args...); err != nil {
 		return nil, 0, apperror.Internal("count tasks", err)
 	}
 
 	var rows []taskRow
 	query := "SELECT " + taskColumns + " FROM tasks WHERE " + where +
 		" ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?"
-	args = append(args, q.PageSize, (q.Page-1)*q.PageSize)
-	if err := conn.SelectContext(ctx, &rows, query, args...); err != nil {
+	args = append(args, limit, offset)
+	if err = conn.SelectContext(ctx, &rows, query, args...); err != nil {
 		return nil, 0, apperror.Internal("list tasks", err)
 	}
 

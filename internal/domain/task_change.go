@@ -13,3 +13,13 @@ type TaskChange struct {
 	NewValue  string
 	ChangedAt time.Time
 }
+
+// TaskChangePage is one page of the history of a task, newest first. Total counts all entries
+// of the history.
+type TaskChangePage struct {
+	Changes    []TaskChange
+	Total      int
+	Page       int
+	PageSize   int
+	TotalPages int
+}

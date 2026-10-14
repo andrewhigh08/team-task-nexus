@@ -3,9 +3,11 @@ package mysqlrepo
 import (
 	"context"
 	"database/sql"
+	"fmt"
 
 	"github.com/jmoiron/sqlx"
 
+	"github.com/andrewhigh08/team-task-nexus/internal/domain"
 	"github.com/andrewhigh08/team-task-nexus/internal/pkg/apperror"
 )
 
@@ -42,4 +44,14 @@ func affectedOne(result sql.Result, op string) (bool, error) {
 		return false, apperror.Internal(op, err)
 	}
 	return n > 0, nil
+}
+
+// pageWindow returns the LIMIT and OFFSET that select page p. The services fill in and check
+// pages before they reach a repository, so a page below 1 is a programming error of op, not
+// bad input.
+func pageWindow(p domain.PageRequest, op string) (limit, offset int, err error) {
+	if p.Page < 1 || p.PageSize < 1 {
+		return 0, 0, apperror.Internal(op, fmt.Errorf("invalid page %d of size %d", p.Page, p.PageSize))
+	}
+	return p.PageSize, (p.Page - 1) * p.PageSize, nil
 }

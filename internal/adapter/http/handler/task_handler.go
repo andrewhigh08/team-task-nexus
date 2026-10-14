@@ -79,12 +79,11 @@ func taskQuery(r *http.Request, viewerID int64) (domain.TaskQuery, error) {
 	if q.AssigneeID, err = queryID(r, "assignee_id"); err != nil {
 		return domain.TaskQuery{}, err
 	}
-	if q.Page, err = queryInt(r, "page"); err != nil {
+	page, err := pageQuery(r)
+	if err != nil {
 		return domain.TaskQuery{}, err
 	}
-	if q.PageSize, err = queryInt(r, "page_size"); err != nil {
-		return domain.TaskQuery{}, err
-	}
+	q.Page, q.PageSize = page.Page, page.PageSize
 	return q, nil
 }
 
@@ -137,7 +136,8 @@ func (h *TaskHandler) Update(w http.ResponseWriter, r *http.Request) {
 	response.JSON(w, http.StatusOK, newTaskResponse(*task))
 }
 
-// History returns the change history of the task in the path, newest first.
+// History returns a page of the change history of the task in the path, newest first, paged
+// by the query parameters page and page_size.
 func (h *TaskHandler) History(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
@@ -148,13 +148,23 @@ func (h *TaskHandler) History(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, r, err)
 		return
 	}
-
-	changes, err := h.tasks.History(r.Context(), userID, taskID)
+	p, err := pageQuery(r)
 	if err != nil {
 		response.Error(w, r, err)
 		return
 	}
-	response.JSON(w, http.StatusOK, mapAll(changes, newTaskChangeResponse))
+
+	page, err := h.tasks.History(r.Context(), userID, taskID, p)
+	if err != nil {
+		response.Error(w, r, err)
+		return
+	}
+	response.JSONWithMeta(w, mapAll(page.Changes, newTaskChangeResponse), response.Meta{
+		Page:       page.Page,
+		PageSize:   page.PageSize,
+		Total:      page.Total,
+		TotalPages: page.TotalPages,
+	})
 }
 
 // ListOrphaned returns the tasks of the team in the path that are assigned to former members.

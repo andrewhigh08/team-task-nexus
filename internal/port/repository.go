@@ -66,8 +66,9 @@ type TaskRepository interface {
 type TaskHistoryRepository interface {
 	// Add inserts changes, all with the same timestamp.
 	Add(ctx context.Context, changes []domain.TaskChange) error
-	// ListByTask returns the history of taskID, newest first.
-	ListByTask(ctx context.Context, taskID int64) ([]domain.TaskChange, error)
+	// ListByTask returns page p of the history of taskID, newest first, and the number of all
+	// its entries.
+	ListByTask(ctx context.Context, taskID int64, p domain.PageRequest) ([]domain.TaskChange, int, error)
 }
 
 // CommentRepository stores task comments. Lookups of a missing comment fail with an apperror
@@ -76,6 +77,7 @@ type CommentRepository interface {
 	// Create inserts comment and returns its id.
 	Create(ctx context.Context, comment *domain.Comment) (int64, error)
 	GetByID(ctx context.Context, id int64) (*domain.Comment, error)
-	// ListByTask returns the comments of taskID, oldest first.
-	ListByTask(ctx context.Context, taskID int64) ([]domain.Comment, error)
+	// ListByTask returns page p of the comments of taskID, oldest first, and the number of all
+	// its comments.
+	ListByTask(ctx context.Context, taskID int64, p domain.PageRequest) ([]domain.Comment, int, error)
 }

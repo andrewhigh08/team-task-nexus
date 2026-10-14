@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -190,6 +191,87 @@ func TestTaskListsFilterPageAndRejectBadQueries(t *testing.T) {
 			assert.Equal(t, "must be a positive integer", fieldProblem(errBody, "id"))
 		})
 	}
+}
+
+// TestHistoryAndCommentsArePaged checks that the pages of a task's history and comments
+// split the list without gaps or overlaps, although several entries share their timestamp.
+func TestHistoryAndCommentsArePaged(t *testing.T) {
+	t.Parallel()
+	c := newClient(t)
+	owner := c.mustRegister(t, "Owner")
+	team := c.mustCreateTeam(t, owner, "Paging")
+	task := c.mustCreateTask(t, owner, team.ID, "Paged", nil)
+	// Five changes; the first two are saved by one update and share their timestamp.
+	c.mustPatchTask(t, owner, task.ID, map[string]any{"status": "in_progress", "priority": 3})
+	c.mustPatchTask(t, owner, task.ID, map[string]any{"title": "Paged task"})
+	c.mustPatchTask(t, owner, task.ID, map[string]any{"status": "review"})
+	c.mustPatchTask(t, owner, task.ID, map[string]any{"description": "Split into pages"})
+	contents := []string{"First", "Second", "Third"}
+	commentIDs := make([]int64, 0, len(contents))
+	for _, content := range contents {
+		commentIDs = append(commentIDs, c.mustComment(t, owner, task.ID, content).ID)
+	}
+	historyPath, commentsPath := taskPath(task.ID, "/history"), taskPath(task.ID, "/comments")
+
+	history := c.history(t, owner, task.ID)
+	require.Len(t, history, 5)
+	historyIDs := make([]int64, 0, len(history))
+	for _, h := range history {
+		historyIDs = append(historyIDs, h.ID)
+	}
+	assert.True(t, slices.IsSortedFunc(historyIDs, func(a, b int64) int { return cmp.Compare(b, a) }), "newest first: %v", historyIDs)
+	firstPage := c.do(t, http.MethodGet, historyPath, nil, owner.Token)
+	assert.Equal(t, history, expect[[]changeData](t, firstPage, http.StatusOK))
+	assert.Equal(t, &metaBody{Page: 1, PageSize: 20, Total: 5, TotalPages: 1}, firstPage.Meta, "the first page of 20 by default")
+	paged := make([]changeData, 0, len(history))
+	for _, page := range []int{1, 2, 3} {
+		resp := c.do(t, http.MethodGet, historyPath+"?page_size=2&page="+strconv.Itoa(page), nil, owner.Token)
+		paged = append(paged, expect[[]changeData](t, resp, http.StatusOK)...)
+		assert.Equal(t, &metaBody{Page: page, PageSize: 2, Total: 5, TotalPages: 3}, resp.Meta)
+	}
+	assert.Equal(t, history, paged)
+	beyond := c.do(t, http.MethodGet, historyPath+"?page_size=2&page=4", nil, owner.Token)
+	requireStatus(t, beyond, http.StatusOK)
+	assert.JSONEq(t, `[]`, string(beyond.Data))
+	assert.Equal(t, &metaBody{Page: 4, PageSize: 2, Total: 5, TotalPages: 3}, beyond.Meta)
+
+	all := c.do(t, http.MethodGet, commentsPath, nil, owner.Token)
+	assert.Equal(t, commentIDs, commentIDsOf(expect[[]commentData](t, all, http.StatusOK)), "oldest first")
+	assert.Equal(t, &metaBody{Page: 1, PageSize: 20, Total: 3, TotalPages: 1}, all.Meta)
+	first := c.do(t, http.MethodGet, commentsPath+"?page_size=2", nil, owner.Token)
+	assert.Equal(t, commentIDs[:2], commentIDsOf(expect[[]commentData](t, first, http.StatusOK)))
+	assert.Equal(t, &metaBody{Page: 1, PageSize: 2, Total: 3, TotalPages: 2}, first.Meta)
+	last := c.do(t, http.MethodGet, commentsPath+"?page_size=2&page=2", nil, owner.Token)
+	assert.Equal(t, commentIDs[2:], commentIDsOf(expect[[]commentData](t, last, http.StatusOK)))
+	assert.Equal(t, &metaBody{Page: 2, PageSize: 2, Total: 3, TotalPages: 2}, last.Meta)
+
+	bad := []struct {
+		query   string
+		field   string
+		problem string
+	}{
+		{query: "?page=0", field: "page", problem: "must be a positive integer"},
+		{query: "?page=10001", field: "page", problem: "must be between 1 and 10000"},
+		{query: "?page_size=101", field: "page_size", problem: "must be between 1 and 100"},
+		{query: "?page_size=x", field: "page_size", problem: "must be a positive integer"},
+	}
+	for _, list := range []struct{ name, path string }{{name: "history", path: historyPath}, {name: "comments", path: commentsPath}} {
+		for _, tc := range bad {
+			t.Run(list.name+tc.query, func(t *testing.T) {
+				t.Parallel()
+				errBody := requireError(t, c.do(t, http.MethodGet, list.path+tc.query, nil, owner.Token), http.StatusBadRequest, "VALIDATION_ERROR")
+				assert.Equal(t, tc.problem, fieldProblem(errBody, tc.field))
+			})
+		}
+	}
+}
+
+func commentIDsOf(comments []commentData) []int64 {
+	ids := make([]int64, 0, len(comments))
+	for _, comment := range comments {
+		ids = append(ids, comment.ID)
+	}
+	return ids
 }
 
 // TestConcurrentUpdatesAreNotLost has two clients patch different fields of one task at the

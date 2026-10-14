@@ -181,20 +181,42 @@ func TestCommentService_Create_Rejections(t *testing.T) {
 
 func TestCommentService_List(t *testing.T) {
 	t.Parallel()
+	comments := []domain.Comment{*testComment()}
+	tests := []struct {
+		name  string
+		in    domain.PageRequest
+		query domain.PageRequest // the page the repository is asked for
+		total int
+		want  *domain.CommentPage
+	}{
+		{
+			name:  "first page by default",
+			query: domain.PageRequest{Page: 1, PageSize: 20},
+			total: 1,
+			want:  &domain.CommentPage{Comments: comments, Total: 1, Page: 1, PageSize: 20, TotalPages: 1},
+		},
+		{
+			name:  "requested page",
+			in:    domain.PageRequest{Page: 2, PageSize: 100},
+			query: domain.PageRequest{Page: 2, PageSize: 100},
+			total: 101,
+			want:  &domain.CommentPage{Comments: comments, Total: 101, Page: 2, PageSize: 100, TotalPages: 2},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			f := newFixture(t)
+			f.tasks.EXPECT().GetByID(gomock.Any(), testTaskID).Return(testTask(), nil)
+			f.expectRole(gomock.Any(), memberUser, domain.TeamRoleMember)
+			f.comments.EXPECT().ListByTask(gomock.Any(), testTaskID, tt.query).Return(comments, tt.total, nil)
 
-	t.Run("member", func(t *testing.T) {
-		t.Parallel()
-		f := newFixture(t)
-		want := []domain.Comment{*testComment()}
-		f.tasks.EXPECT().GetByID(gomock.Any(), testTaskID).Return(testTask(), nil)
-		f.expectRole(gomock.Any(), memberUser, domain.TeamRoleMember)
-		f.comments.EXPECT().ListByTask(gomock.Any(), testTaskID).Return(want, nil)
+			page, err := f.commentService(t).List(t.Context(), memberUser, testTaskID, tt.in)
 
-		comments, err := f.commentService(t).List(t.Context(), memberUser, testTaskID)
-
-		require.NoError(t, err)
-		assert.Equal(t, want, comments)
-	})
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, page)
+		})
+	}
 
 	t.Run("outsider", func(t *testing.T) {
 		t.Parallel()
@@ -202,9 +224,35 @@ func TestCommentService_List(t *testing.T) {
 		f.tasks.EXPECT().GetByID(gomock.Any(), testTaskID).Return(testTask(), nil)
 		f.expectRole(gomock.Any(), outsiderUser, "")
 
-		comments, err := f.commentService(t).List(t.Context(), outsiderUser, testTaskID)
+		page, err := f.commentService(t).List(t.Context(), outsiderUser, testTaskID, domain.PageRequest{})
 
 		requireNotFound(t, err, "task", testTaskID)
-		assert.Nil(t, comments)
+		assert.Nil(t, page)
 	})
+
+	t.Run("repository failure", func(t *testing.T) {
+		t.Parallel()
+		f := newFixture(t)
+		boom := apperror.Internal("list comments", errors.New("lock wait timeout exceeded"))
+		f.tasks.EXPECT().GetByID(gomock.Any(), testTaskID).Return(testTask(), nil)
+		f.expectRole(gomock.Any(), memberUser, domain.TeamRoleMember)
+		f.comments.EXPECT().ListByTask(gomock.Any(), testTaskID, gomock.Any()).Return(nil, 0, boom)
+
+		page, err := f.commentService(t).List(t.Context(), memberUser, testTaskID, domain.PageRequest{})
+
+		require.ErrorIs(t, err, boom)
+		assert.Nil(t, page)
+	})
+
+	// The page is checked before the task is looked up, so no repository is called.
+	for _, tt := range invalidPages {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			page, err := newFixture(t).commentService(t).List(t.Context(), memberUser, testTaskID, tt.p)
+
+			requireFieldErrors(t, err, tt.want)
+			assert.Nil(t, page)
+		})
+	}
 }

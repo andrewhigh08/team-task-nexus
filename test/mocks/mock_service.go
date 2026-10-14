@@ -270,18 +270,18 @@ func (mr *MockTaskServiceMockRecorder) Get(ctx, userID, taskID any) *gomock.Call
 }
 
 // History mocks base method.
-func (m *MockTaskService) History(ctx context.Context, userID, taskID int64) ([]domain.TaskChange, error) {
+func (m *MockTaskService) History(ctx context.Context, userID, taskID int64, p domain.PageRequest) (*domain.TaskChangePage, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "History", ctx, userID, taskID)
-	ret0, _ := ret[0].([]domain.TaskChange)
+	ret := m.ctrl.Call(m, "History", ctx, userID, taskID, p)
+	ret0, _ := ret[0].(*domain.TaskChangePage)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // History indicates an expected call of History.
-func (mr *MockTaskServiceMockRecorder) History(ctx, userID, taskID any) *gomock.Call {
+func (mr *MockTaskServiceMockRecorder) History(ctx, userID, taskID, p any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "History", reflect.TypeOf((*MockTaskService)(nil).History), ctx, userID, taskID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "History", reflect.TypeOf((*MockTaskService)(nil).History), ctx, userID, taskID, p)
 }
 
 // List mocks base method.
@@ -369,16 +369,16 @@ func (mr *MockCommentServiceMockRecorder) Create(ctx, userID, taskID, in any) *g
 }
 
 // List mocks base method.
-func (m *MockCommentService) List(ctx context.Context, userID, taskID int64) ([]domain.Comment, error) {
+func (m *MockCommentService) List(ctx context.Context, userID, taskID int64, p domain.PageRequest) (*domain.CommentPage, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "List", ctx, userID, taskID)
-	ret0, _ := ret[0].([]domain.Comment)
+	ret := m.ctrl.Call(m, "List", ctx, userID, taskID, p)
+	ret0, _ := ret[0].(*domain.CommentPage)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // List indicates an expected call of List.
-func (mr *MockCommentServiceMockRecorder) List(ctx, userID, taskID any) *gomock.Call {
+func (mr *MockCommentServiceMockRecorder) List(ctx, userID, taskID, p any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "List", reflect.TypeOf((*MockCommentService)(nil).List), ctx, userID, taskID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "List", reflect.TypeOf((*MockCommentService)(nil).List), ctx, userID, taskID, p)
 }

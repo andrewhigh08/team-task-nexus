@@ -11,3 +11,13 @@ type Comment struct {
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
+
+// CommentPage is one page of the comments of a task, oldest first. Total counts all comments
+// of the task.
+type CommentPage struct {
+	Comments   []Comment
+	Total      int
+	Page       int
+	PageSize   int
+	TotalPages int
+}

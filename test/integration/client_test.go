@@ -347,9 +347,21 @@ func (c *apiClient) mustGetTask(t *testing.T, caller account, taskID int64) task
 	return expect[taskData](t, c.do(t, http.MethodGet, taskPath(taskID, ""), nil, caller.Token), http.StatusOK)
 }
 
+// history returns the whole history of the task. The history is paged; the tests never make
+// more changes than the largest page holds.
 func (c *apiClient) history(t *testing.T, caller account, taskID int64) []changeData {
 	t.Helper()
-	return expect[[]changeData](t, c.do(t, http.MethodGet, taskPath(taskID, "/history"), nil, caller.Token), http.StatusOK)
+	resp := c.do(t, http.MethodGet, taskPath(taskID, "/history?page_size=100"), nil, caller.Token)
+	changes := expect[[]changeData](t, resp, http.StatusOK)
+	require.NotNil(t, resp.Meta)
+	require.LessOrEqual(t, resp.Meta.TotalPages, 1, "the history does not fit on one page")
+	return changes
+}
+
+func (c *apiClient) mustComment(t *testing.T, author account, taskID int64, content string) commentData {
+	t.Helper()
+	body := map[string]string{"content": content}
+	return expect[commentData](t, c.do(t, http.MethodPost, taskPath(taskID, "/comments"), body, author.Token), http.StatusCreated)
 }
 
 // taskIDs returns the ids of the tasks the caller gets from path, a task list, in the order

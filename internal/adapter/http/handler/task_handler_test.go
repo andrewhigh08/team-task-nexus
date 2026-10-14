@@ -230,31 +230,40 @@ func TestTaskHandler_Update(t *testing.T) {
 
 func TestTaskHandler_History(t *testing.T) {
 	t.Parallel()
+	listing := func(p domain.PageRequest, page *domain.TaskChangePage, err error) func(*mocks.MockTaskService) {
+		return func(svc *mocks.MockTaskService) {
+			svc.EXPECT().History(gomock.Any(), testUserID, int64(11), p).Return(page, err)
+		}
+	}
+	change := domain.TaskChange{ID: 5, TaskID: 11, UserID: 3, Field: "assignee_id", OldValue: "", NewValue: "3", ChangedAt: completedAt}
+	const changeJSON = `{"id":5,"task_id":11,"user_id":3,"field":"assignee_id","old_value":"",` +
+		`"new_value":"3","changed_at":"2026-03-14T09:26:53Z"}`
 	runHandlerTests(t, mockedTaskHandler, (*TaskHandler).History, http.MethodGet, "/tasks/{id}/history", []taskTest{
 		{
-			name: "changes", target: "/tasks/11/history",
-			expect: func(svc *mocks.MockTaskService) {
-				svc.EXPECT().History(gomock.Any(), testUserID, int64(11)).Return([]domain.TaskChange{{
-					ID: 5, TaskID: 11, UserID: 3, Field: "assignee_id", OldValue: "", NewValue: "3", ChangedAt: completedAt,
-				}}, nil)
-			},
+			name: "requested page", target: "/tasks/11/history?page=2&page_size=1",
+			expect: listing(domain.PageRequest{Page: 2, PageSize: 1},
+				&domain.TaskChangePage{Changes: []domain.TaskChange{change}, Total: 3, Page: 2, PageSize: 1, TotalPages: 3}, nil),
 			wantStatus: http.StatusOK,
-			wantBody: `{"success":true,"data":[{"id":5,"task_id":11,"user_id":3,"field":"assignee_id","old_value":"",` +
-				`"new_value":"3","changed_at":"2026-03-14T09:26:53Z"}]}`,
+			wantBody:   `{"success":true,"data":[` + changeJSON + `],"meta":{"page":2,"page_size":1,"total":3,"total_pages":3}}`,
 		},
 		{
-			name: "no changes", target: "/tasks/11/history",
-			expect: func(svc *mocks.MockTaskService) {
-				svc.EXPECT().History(gomock.Any(), testUserID, int64(11)).Return(nil, nil)
-			},
-			wantStatus: http.StatusOK, wantBody: `{"success":true,"data":[]}`,
+			name: "no parameters, no changes", target: "/tasks/11/history",
+			expect:     listing(domain.PageRequest{}, &domain.TaskChangePage{Page: 1, PageSize: 20}, nil),
+			wantStatus: http.StatusOK,
+			wantBody:   `{"success":true,"data":[],"meta":{"page":1,"page_size":20,"total":0,"total_pages":0}}`,
+		},
+		{
+			name: "page size above the maximum", target: "/tasks/11/history?page_size=101",
+			expect: listing(domain.PageRequest{PageSize: 101}, nil, apperror.ValidationError("invalid input",
+				map[string]any{"fields": map[string]string{"page_size": "must be between 1 and 100"}})),
+			wantStatus: http.StatusBadRequest, wantBody: invalidFieldBody("page_size", "must be between 1 and 100"),
 		},
 		{name: "malformed id", target: "/tasks/0/history", wantStatus: http.StatusBadRequest, wantBody: invalidFieldBody("id", msgPositive)},
+		{name: "malformed page", target: "/tasks/11/history?page=0", wantStatus: http.StatusBadRequest, wantBody: invalidFieldBody("page", msgPositive)},
+		{name: "malformed page size", target: "/tasks/11/history?page_size=x", wantStatus: http.StatusBadRequest, wantBody: invalidFieldBody("page_size", msgPositive)},
 		{
 			name: "task of another team", target: "/tasks/11/history",
-			expect: func(svc *mocks.MockTaskService) {
-				svc.EXPECT().History(gomock.Any(), testUserID, int64(11)).Return(nil, apperror.NotFound("task", int64(11)))
-			},
+			expect:     listing(domain.PageRequest{}, nil, apperror.NotFound("task", int64(11))),
 			wantStatus: http.StatusNotFound, wantBody: notFoundBody("task", 11),
 		},
 	})

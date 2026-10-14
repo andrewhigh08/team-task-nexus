@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"errors"
-	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -12,14 +11,6 @@ import (
 	"github.com/andrewhigh08/team-task-nexus/internal/pkg/logger"
 	"github.com/andrewhigh08/team-task-nexus/internal/pkg/metrics"
 	"github.com/andrewhigh08/team-task-nexus/internal/port"
-)
-
-// Paging of task lists. maxPage keeps the OFFSET the repository computes far from overflow;
-// deeper pages are better reached by narrowing the filter.
-const (
-	defaultPageSize = 20
-	maxPageSize     = 100
-	maxPage         = 10_000
 )
 
 // TaskDeps lists the collaborators of TaskService. A nil Clock means time.Now.
@@ -307,13 +298,8 @@ func (s *TaskService) listTeam(ctx context.Context, q domain.TaskQuery) (*domain
 
 // normalizeTaskQuery fills in the default page and page size of q and validates it.
 func normalizeTaskQuery(q *domain.TaskQuery) error {
-	if q.Page == 0 {
-		q.Page = 1
-	}
-	if q.PageSize == 0 {
-		q.PageSize = defaultPageSize
-	}
 	errs := fieldErrors{}
+	normalizePage(&q.Page, &q.PageSize, errs)
 	if q.TeamID < 0 {
 		errs.add("team_id", msgPositive)
 	}
@@ -322,12 +308,6 @@ func normalizeTaskQuery(q *domain.TaskQuery) error {
 	}
 	if q.Status != "" {
 		errs.checkStatus(fieldStatus, q.Status)
-	}
-	if q.Page < 1 || q.Page > maxPage {
-		errs.add("page", fmt.Sprintf("must be between 1 and %d", maxPage))
-	}
-	if q.PageSize < 1 || q.PageSize > maxPageSize {
-		errs.add("page_size", fmt.Sprintf("must be between 1 and %d", maxPageSize))
 	}
 	return errs.err()
 }
@@ -342,16 +322,29 @@ func (s *TaskService) listFromStore(ctx context.Context, q domain.TaskQuery) (*d
 		Total:      total,
 		Page:       q.Page,
 		PageSize:   q.PageSize,
-		TotalPages: (total + q.PageSize - 1) / q.PageSize,
+		TotalPages: totalPages(total, q.PageSize),
 	}, nil
 }
 
-// History returns the change history of the task to a member of its team.
-func (s *TaskService) History(ctx context.Context, userID, taskID int64) ([]domain.TaskChange, error) {
+// History returns a page of the change history of the task to a member of its team.
+func (s *TaskService) History(ctx context.Context, userID, taskID int64, p domain.PageRequest) (*domain.TaskChangePage, error) {
+	if err := normalizePageRequest(&p); err != nil {
+		return nil, err
+	}
 	if _, err := loadTask(ctx, s.tasks, s.teams, taskID, userID); err != nil {
 		return nil, err
 	}
-	return s.history.ListByTask(ctx, taskID)
+	changes, total, err := s.history.ListByTask(ctx, taskID, p)
+	if err != nil {
+		return nil, err
+	}
+	return &domain.TaskChangePage{
+		Changes:    changes,
+		Total:      total,
+		Page:       p.Page,
+		PageSize:   p.PageSize,
+		TotalPages: totalPages(total, p.PageSize),
+	}, nil
 }
 
 // ListOrphaned returns the tasks of the team still assigned to users who left it, to the

@@ -110,8 +110,9 @@ type TaskService interface {
 	// List returns a page of the tasks q selects; q.ViewerID is the caller, and only tasks of
 	// the caller's teams are listed. Zero Page and PageSize mean the first page of 20.
 	List(ctx context.Context, q domain.TaskQuery) (*domain.TaskPage, error)
-	// History returns the change history of the task, newest first.
-	History(ctx context.Context, userID, taskID int64) ([]domain.TaskChange, error)
+	// History returns page p of the change history of the task, newest first. Zero Page and
+	// PageSize mean the first page of 20.
+	History(ctx context.Context, userID, taskID int64, p domain.PageRequest) (*domain.TaskChangePage, error)
 	// ListOrphaned returns the tasks of the team assigned to users who have left it; only the
 	// owner and admins may see them.
 	ListOrphaned(ctx context.Context, userID, teamID int64) ([]domain.OrphanedAssignment, error)
@@ -126,6 +127,7 @@ type CreateCommentInput struct {
 type CommentService interface {
 	// Create adds a comment by userID to the task.
 	Create(ctx context.Context, userID, taskID int64, in CreateCommentInput) (*domain.Comment, error)
-	// List returns the comments of the task, oldest first.
-	List(ctx context.Context, userID, taskID int64) ([]domain.Comment, error)
+	// List returns page p of the comments of the task, oldest first. Zero Page and PageSize
+	// mean the first page of 20.
+	List(ctx context.Context, userID, taskID int64, p domain.PageRequest) (*domain.CommentPage, error)
 }

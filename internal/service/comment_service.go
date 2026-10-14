@@ -108,10 +108,23 @@ func (s *CommentService) create(ctx context.Context, userID, taskID int64, conte
 	return comment, nil
 }
 
-// List returns the comments of a task to a member of its team.
-func (s *CommentService) List(ctx context.Context, userID, taskID int64) ([]domain.Comment, error) {
+// List returns a page of the comments of a task to a member of its team.
+func (s *CommentService) List(ctx context.Context, userID, taskID int64, p domain.PageRequest) (*domain.CommentPage, error) {
+	if err := normalizePageRequest(&p); err != nil {
+		return nil, err
+	}
 	if _, err := loadTask(ctx, s.tasks, s.teams, taskID, userID); err != nil {
 		return nil, err
 	}
-	return s.comments.ListByTask(ctx, taskID)
+	comments, total, err := s.comments.ListByTask(ctx, taskID, p)
+	if err != nil {
+		return nil, err
+	}
+	return &domain.CommentPage{
+		Comments:   comments,
+		Total:      total,
+		Page:       p.Page,
+		PageSize:   p.PageSize,
+		TotalPages: totalPages(total, p.PageSize),
+	}, nil
 }

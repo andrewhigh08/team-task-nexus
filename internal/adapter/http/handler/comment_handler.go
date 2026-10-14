@@ -67,7 +67,8 @@ func (h *CommentHandler) Create(w http.ResponseWriter, r *http.Request) {
 	response.JSON(w, http.StatusCreated, newCommentResponse(*comment))
 }
 
-// List returns the comments of the task in the path, oldest first.
+// List returns a page of the comments of the task in the path, oldest first, paged by the
+// query parameters page and page_size.
 func (h *CommentHandler) List(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
@@ -78,11 +79,21 @@ func (h *CommentHandler) List(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, r, err)
 		return
 	}
-
-	comments, err := h.comments.List(r.Context(), userID, taskID)
+	p, err := pageQuery(r)
 	if err != nil {
 		response.Error(w, r, err)
 		return
 	}
-	response.JSON(w, http.StatusOK, mapAll(comments, newCommentResponse))
+
+	page, err := h.comments.List(r.Context(), userID, taskID, p)
+	if err != nil {
+		response.Error(w, r, err)
+		return
+	}
+	response.JSONWithMeta(w, mapAll(page.Comments, newCommentResponse), response.Meta{
+		Page:       page.Page,
+		PageSize:   page.PageSize,
+		Total:      page.Total,
+		TotalPages: page.TotalPages,
+	})
 }

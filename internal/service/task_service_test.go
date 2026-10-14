@@ -1061,20 +1061,42 @@ func TestTaskService_List_Rejections(t *testing.T) {
 
 func TestTaskService_History(t *testing.T) {
 	t.Parallel()
+	changes := []domain.TaskChange{{ID: 3, TaskID: testTaskID, UserID: adminUser, Field: "status", OldValue: "todo", NewValue: "done"}}
+	tests := []struct {
+		name  string
+		in    domain.PageRequest
+		query domain.PageRequest // the page the repository is asked for
+		total int
+		want  *domain.TaskChangePage
+	}{
+		{
+			name:  "first page by default",
+			query: domain.PageRequest{Page: 1, PageSize: 20},
+			total: 41,
+			want:  &domain.TaskChangePage{Changes: changes, Total: 41, Page: 1, PageSize: 20, TotalPages: 3},
+		},
+		{
+			name:  "requested page",
+			in:    domain.PageRequest{Page: 3, PageSize: 5},
+			query: domain.PageRequest{Page: 3, PageSize: 5},
+			total: 11,
+			want:  &domain.TaskChangePage{Changes: changes, Total: 11, Page: 3, PageSize: 5, TotalPages: 3},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			f := newFixture(t)
+			f.tasks.EXPECT().GetByID(gomock.Any(), testTaskID).Return(testTask(), nil)
+			f.expectRole(gomock.Any(), memberUser, domain.TeamRoleMember)
+			f.history.EXPECT().ListByTask(gomock.Any(), testTaskID, tt.query).Return(changes, tt.total, nil)
 
-	t.Run("member", func(t *testing.T) {
-		t.Parallel()
-		f := newFixture(t)
-		want := []domain.TaskChange{{ID: 3, TaskID: testTaskID, UserID: adminUser, Field: "status", OldValue: "todo", NewValue: "done"}}
-		f.tasks.EXPECT().GetByID(gomock.Any(), testTaskID).Return(testTask(), nil)
-		f.expectRole(gomock.Any(), memberUser, domain.TeamRoleMember)
-		f.history.EXPECT().ListByTask(gomock.Any(), testTaskID).Return(want, nil)
+			page, err := f.taskService(t).History(t.Context(), memberUser, testTaskID, tt.in)
 
-		changes, err := f.taskService(t).History(t.Context(), memberUser, testTaskID)
-
-		require.NoError(t, err)
-		assert.Equal(t, want, changes)
-	})
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, page)
+		})
+	}
 
 	t.Run("outsider", func(t *testing.T) {
 		t.Parallel()
@@ -1082,10 +1104,37 @@ func TestTaskService_History(t *testing.T) {
 		f.tasks.EXPECT().GetByID(gomock.Any(), testTaskID).Return(testTask(), nil)
 		f.expectRole(gomock.Any(), outsiderUser, "")
 
-		_, err := f.taskService(t).History(t.Context(), outsiderUser, testTaskID)
+		page, err := f.taskService(t).History(t.Context(), outsiderUser, testTaskID, domain.PageRequest{})
 
 		requireNotFound(t, err, "task", testTaskID)
+		assert.Nil(t, page)
 	})
+
+	t.Run("repository failure", func(t *testing.T) {
+		t.Parallel()
+		f := newFixture(t)
+		boom := apperror.Internal("list task history", errors.New("lock wait timeout exceeded"))
+		f.tasks.EXPECT().GetByID(gomock.Any(), testTaskID).Return(testTask(), nil)
+		f.expectRole(gomock.Any(), memberUser, domain.TeamRoleMember)
+		f.history.EXPECT().ListByTask(gomock.Any(), testTaskID, gomock.Any()).Return(nil, 0, boom)
+
+		page, err := f.taskService(t).History(t.Context(), memberUser, testTaskID, domain.PageRequest{})
+
+		require.ErrorIs(t, err, boom)
+		assert.Nil(t, page)
+	})
+
+	// The page is checked before the task is looked up, so no repository is called.
+	for _, tt := range invalidPages {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			page, err := newFixture(t).taskService(t).History(t.Context(), memberUser, testTaskID, tt.p)
+
+			requireFieldErrors(t, err, tt.want)
+			assert.Nil(t, page)
+		})
+	}
 }
 
 func TestTaskService_ListOrphaned(t *testing.T) {

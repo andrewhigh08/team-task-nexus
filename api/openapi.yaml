@@ -673,10 +673,15 @@ paths:
       operationId: getTaskHistory
       tags: [tasks]
       summary: Change history of a task
-      description: Every recorded change of a field, newest first.
+      description: |
+        A page of the recorded changes of the task's fields, newest first. The changes of one
+        update share their `changed_at`; among them the higher `id` comes first.
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
       responses:
         '200':
-          description: The changes.
+          description: One page of the changes.
           headers:
             X-RateLimit-Limit:
               $ref: '#/components/headers/RateLimitLimit'
@@ -685,7 +690,25 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TaskChangeListResponse'
+                $ref: '#/components/schemas/TaskChangePageResponse'
+              example:
+                success: true
+                data:
+                  - id: 3
+                    task_id: 1
+                    user_id: 1
+                    field: due_date
+                    old_value: '2026-11-01'
+                    new_value: ''
+                    changed_at: '2026-10-14T16:57:30Z'
+                  - id: 2
+                    task_id: 1
+                    user_id: 1
+                    field: assignee_id
+                    old_value: ''
+                    new_value: '2'
+                    changed_at: '2026-10-14T16:57:30Z'
+                meta: {page: 1, page_size: 2, total: 3, total_pages: 2}
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -743,10 +766,15 @@ paths:
       operationId: listComments
       tags: [tasks]
       summary: List the comments of a task
-      description: Every comment of the task, oldest first.
+      description: |
+        A page of the comments of the task, oldest first. Comments posted within the same
+        second share their `created_at`; among them the lower `id` comes first.
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
       responses:
         '200':
-          description: The comments.
+          description: One page of the comments.
           headers:
             X-RateLimit-Limit:
               $ref: '#/components/headers/RateLimitLimit'
@@ -755,7 +783,17 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/CommentListResponse'
+                $ref: '#/components/schemas/CommentPageResponse'
+              example:
+                success: true
+                data:
+                  - id: 7
+                    task_id: 1
+                    user_id: 2
+                    content: Renewed until 2027
+                    created_at: '2026-10-14T17:02:11Z'
+                    updated_at: '2026-10-14T17:02:11Z'
+                meta: {page: 1, page_size: 20, total: 1, total_pages: 1}
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -827,7 +865,7 @@ components:
     PageSize:
       name: page_size
       in: query
-      description: Number of tasks per page.
+      description: Number of items per page.
       schema:
         type: integer
         minimum: 1
@@ -1048,7 +1086,7 @@ components:
           examples: [20]
         total:
           type: integer
-          description: Number of matching tasks on all pages.
+          description: Number of items on all pages.
           examples: [41]
         total_pages:
           type: integer
@@ -1558,9 +1596,9 @@ components:
         meta:
           $ref: '#/components/schemas/PageMeta'
 
-    TaskChangeListResponse:
+    TaskChangePageResponse:
       type: object
-      required: [success, data]
+      required: [success, data, meta]
       properties:
         success:
           const: true
@@ -1568,6 +1606,8 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/TaskChange'
+        meta:
+          $ref: '#/components/schemas/PageMeta'
 
     CommentResponse:
       type: object
@@ -1578,9 +1618,9 @@ components:
         data:
           $ref: '#/components/schemas/Comment'
 
-    CommentListResponse:
+    CommentPageResponse:
       type: object
-      required: [success, data]
+      required: [success, data, meta]
       properties:
         success:
           const: true
@@ -1588,3 +1628,5 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Comment'
+        meta:
+          $ref: '#/components/schemas/PageMeta'

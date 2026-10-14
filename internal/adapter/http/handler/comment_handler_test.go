@@ -64,23 +64,37 @@ func TestCommentHandler_Create(t *testing.T) {
 
 func TestCommentHandler_List(t *testing.T) {
 	t.Parallel()
-	listing := func(comments []domain.Comment, err error) func(*mocks.MockCommentService) {
+	listing := func(p domain.PageRequest, page *domain.CommentPage, err error) func(*mocks.MockCommentService) {
 		return func(svc *mocks.MockCommentService) {
-			svc.EXPECT().List(gomock.Any(), testUserID, int64(11)).Return(comments, err)
+			svc.EXPECT().List(gomock.Any(), testUserID, int64(11), p).Return(page, err)
 		}
 	}
 	runHandlerTests(t, mockedCommentHandler, (*CommentHandler).List, http.MethodGet, "/tasks/{id}/comments", []commentTest{
 		{
-			name: "comments", target: "/tasks/11/comments", expect: listing([]domain.Comment{*testComment()}, nil),
-			wantStatus: http.StatusOK, wantBody: `{"success":true,"data":[` + testCommentJSON + `]}`,
+			name: "requested page", target: "/tasks/11/comments?page=3&page_size=2",
+			expect: listing(domain.PageRequest{Page: 3, PageSize: 2},
+				&domain.CommentPage{Comments: []domain.Comment{*testComment()}, Total: 5, Page: 3, PageSize: 2, TotalPages: 3}, nil),
+			wantStatus: http.StatusOK,
+			wantBody:   `{"success":true,"data":[` + testCommentJSON + `],"meta":{"page":3,"page_size":2,"total":5,"total_pages":3}}`,
 		},
 		{
-			name: "no comments", target: "/tasks/11/comments", expect: listing(nil, nil),
-			wantStatus: http.StatusOK, wantBody: `{"success":true,"data":[]}`,
+			name: "no parameters, no comments", target: "/tasks/11/comments",
+			expect:     listing(domain.PageRequest{}, &domain.CommentPage{Page: 1, PageSize: 20}, nil),
+			wantStatus: http.StatusOK,
+			wantBody:   `{"success":true,"data":[],"meta":{"page":1,"page_size":20,"total":0,"total_pages":0}}`,
+		},
+		{
+			name: "page above the maximum", target: "/tasks/11/comments?page=10001",
+			expect: listing(domain.PageRequest{Page: 10001}, nil, apperror.ValidationError("invalid input",
+				map[string]any{"fields": map[string]string{"page": "must be between 1 and 10000"}})),
+			wantStatus: http.StatusBadRequest, wantBody: invalidFieldBody("page", "must be between 1 and 10000"),
 		},
 		{name: "malformed id", target: "/tasks/-1/comments", wantStatus: http.StatusBadRequest, wantBody: invalidFieldBody("id", msgPositive)},
+		{name: "malformed page", target: "/tasks/11/comments?page=first", wantStatus: http.StatusBadRequest, wantBody: invalidFieldBody("page", msgPositive)},
+		{name: "malformed page size", target: "/tasks/11/comments?page_size=-5", wantStatus: http.StatusBadRequest, wantBody: invalidFieldBody("page_size", msgPositive)},
 		{
-			name: "task of another team", target: "/tasks/11/comments", expect: listing(nil, apperror.NotFound("task", int64(11))),
+			name: "task of another team", target: "/tasks/11/comments",
+			expect:     listing(domain.PageRequest{}, nil, apperror.NotFound("task", int64(11))),
 			wantStatus: http.StatusNotFound, wantBody: notFoundBody("task", 11),
 		},
 	})

@@ -50,21 +50,35 @@ func (r *TaskHistoryRepo) Add(ctx context.Context, changes []domain.TaskChange) 
 	return nil
 }
 
-// ListByTask returns the history of the task, newest first.
-func (r *TaskHistoryRepo) ListByTask(ctx context.Context, taskID int64) ([]domain.TaskChange, error) {
+// ListByTask returns page p of the history of the task, newest first, and the number of all
+// its entries. Changes saved by one update share their timestamp, so the id breaks the tie
+// and keeps the pages from overlapping.
+func (r *TaskHistoryRepo) ListByTask(ctx context.Context, taskID int64, p domain.PageRequest) ([]domain.TaskChange, int, error) {
+	limit, offset, err := pageWindow(p, "list task history")
+	if err != nil {
+		return nil, 0, err
+	}
+	conn := getQuerier(ctx, r.db)
+
+	var total int
+	if err = conn.GetContext(ctx, &total, "SELECT COUNT(*) FROM task_history WHERE task_id = ?", taskID); err != nil {
+		return nil, 0, apperror.Internal("count task history", err)
+	}
+
 	var rows []taskChangeRow
-	err := getQuerier(ctx, r.db).SelectContext(ctx, &rows, `
+	err = conn.SelectContext(ctx, &rows, `
 		SELECT id, task_id, user_id, field, old_value, new_value, changed_at
 		FROM task_history
 		WHERE task_id = ?
-		ORDER BY changed_at DESC, id DESC`, taskID,
+		ORDER BY changed_at DESC, id DESC
+		LIMIT ? OFFSET ?`, taskID, limit, offset,
 	)
 	if err != nil {
-		return nil, apperror.Internal("list task history", err)
+		return nil, 0, apperror.Internal("list task history", err)
 	}
 	changes := make([]domain.TaskChange, 0, len(rows))
 	for _, row := range rows {
 		changes = append(changes, domain.TaskChange(row))
 	}
-	return changes, nil
+	return changes, total, nil
 }
