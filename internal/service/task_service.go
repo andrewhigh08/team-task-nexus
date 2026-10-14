@@ -182,7 +182,10 @@ func (s *TaskService) update(ctx context.Context, userID, taskID int64, in port.
 		return nil, false, err
 	}
 	updated := *current
-	changes := applyTaskUpdate(&updated, in, userID, s.now())
+	// completed_at holds whole seconds and MySQL would round the clock to them, while it
+	// truncates updated_at; truncating here keeps a task from reading as completed a second
+	// after its last update.
+	changes := applyTaskUpdate(&updated, in, userID, s.now().Truncate(time.Second))
 	if len(changes) == 0 {
 		return current, false, nil
 	}

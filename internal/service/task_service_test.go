@@ -444,6 +444,37 @@ func TestTaskService_Update_RecordsEveryChangedField(t *testing.T) {
 	}
 }
 
+func TestTaskService_Update_RecordsTheCompletionInWholeSeconds(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	deps := f.taskDeps()
+	// MySQL would round this reading up to the next second.
+	deps.Clock = func() time.Time {
+		return testNow.Add(999 * time.Millisecond).In(time.FixedZone("UTC+3", 3*60*60))
+	}
+	svc, err := NewTaskService(deps)
+	require.NoError(t, err)
+	written := testTask()
+	written.Status = domain.TaskStatusDone
+	written.CompletedAt = new(testNow)
+	changes := []domain.TaskChange{{TaskID: testTaskID, UserID: memberUser, Field: "status", OldValue: "todo", NewValue: "done"}}
+
+	f.expectTx()
+	f.tasks.EXPECT().GetByIDForUpdate(inTx, testTaskID).Return(testTask(), nil)
+	f.expectRole(inTx, memberUser, domain.TeamRoleMember)
+	gomock.InOrder(
+		f.tasks.EXPECT().Update(inTx, written).Return(nil),
+		f.history.EXPECT().Add(inTx, changes).Return(nil),
+		f.tasks.EXPECT().GetByID(inTx, testTaskID).Return(written, nil),
+		f.cache.EXPECT().Invalidate(afterTx, testTeamID).Return(nil),
+	)
+
+	task, err := svc.Update(t.Context(), memberUser, testTaskID, port.UpdateTaskInput{Status: opt.Of(domain.TaskStatusDone)})
+
+	require.NoError(t, err)
+	assert.Same(t, written, task)
+}
+
 func TestTaskService_Update_WritesNothingWhenNothingChanges(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
