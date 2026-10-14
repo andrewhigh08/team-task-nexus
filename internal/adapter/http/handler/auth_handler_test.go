@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -66,7 +67,7 @@ func TestAuthHandler_Register(t *testing.T) {
 		{name: "created", body: body, callsSvc: true, wantStatus: http.StatusCreated},
 		{
 			name: "malformed body", body: `{"email":`, wantStatus: http.StatusBadRequest,
-			wantBody: `{"success":false,"error":{"code":"BAD_REQUEST","message":"invalid request body"}}`,
+			wantBody: invalidBody,
 		},
 		{
 			name: "invalid input", body: body, callsSvc: true, wantStatus: http.StatusBadRequest,
@@ -78,6 +79,10 @@ func TestAuthHandler_Register(t *testing.T) {
 			svcErr: apperror.Conflict("user", "email", "alice@example.com"),
 			wantBody: `{"success":false,"error":{"code":"CONFLICT","message":"user with this email already exists",` +
 				`"details":{"resource":"user","field":"email","value":"alice@example.com"}}}`,
+		},
+		{
+			name: "failure is not exposed", body: body, callsSvc: true, wantStatus: http.StatusInternalServerError,
+			svcErr: apperror.Internal("hash password", errors.New("bcrypt: cost out of range")), wantBody: internalError,
 		},
 	}
 
@@ -92,10 +97,7 @@ func TestAuthHandler_Register(t *testing.T) {
 				}
 				svc.EXPECT().Register(gomock.Any(), wantInput).Return(res, tt.svcErr)
 			}
-			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/register", strings.NewReader(tt.body))
-			rec := httptest.NewRecorder()
-
-			NewAuthHandler(svc).Register(rec, req)
+			rec := serve(t, NewAuthHandler(svc).Register, http.MethodPost, "/api/v1/register", "/api/v1/register", tt.body)
 
 			assert.Equal(t, tt.wantStatus, rec.Code)
 			if tt.wantBody == "" {
@@ -122,7 +124,7 @@ func TestAuthHandler_Login(t *testing.T) {
 		{name: "logged in", body: body, callsSvc: true, wantStatus: http.StatusOK},
 		{
 			name: "malformed body", body: `[]`, wantStatus: http.StatusBadRequest,
-			wantBody: `{"success":false,"error":{"code":"BAD_REQUEST","message":"invalid request body"}}`,
+			wantBody: invalidBody,
 		},
 		{
 			name: "invalid credentials", body: body, callsSvc: true, wantStatus: http.StatusUnauthorized,
@@ -142,10 +144,7 @@ func TestAuthHandler_Login(t *testing.T) {
 				}
 				svc.EXPECT().Login(gomock.Any(), wantInput).Return(res, tt.svcErr)
 			}
-			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/login", strings.NewReader(tt.body))
-			rec := httptest.NewRecorder()
-
-			NewAuthHandler(svc).Login(rec, req)
+			rec := serve(t, NewAuthHandler(svc).Login, http.MethodPost, "/api/v1/login", "/api/v1/login", tt.body)
 
 			assert.Equal(t, tt.wantStatus, rec.Code)
 			if tt.wantBody == "" {
@@ -153,6 +152,34 @@ func TestAuthHandler_Login(t *testing.T) {
 				return
 			}
 			assert.JSONEq(t, tt.wantBody, rec.Body.String())
+		})
+	}
+}
+
+func TestAuthHandler_RejectsBodiesThatAreNotJSON(t *testing.T) {
+	t.Parallel()
+	h := NewAuthHandler(mocks.NewMockAuthService(gomock.NewController(t)))
+	tests := []struct {
+		name   string
+		handle http.HandlerFunc
+	}{
+		{name: "register", handle: h.Register},
+		{name: "login", handle: h.Login},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			form := strings.NewReader("email=alice%40example.com&password=correct+horse")
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/"+tt.name, form)
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			rec := httptest.NewRecorder()
+
+			tt.handle(rec, req)
+
+			assert.Equal(t, http.StatusUnsupportedMediaType, rec.Code)
+			assert.JSONEq(t, `{"success":false,"error":{"code":"UNSUPPORTED_MEDIA_TYPE","message":"request body must be application/json"}}`,
+				rec.Body.String())
 		})
 	}
 }

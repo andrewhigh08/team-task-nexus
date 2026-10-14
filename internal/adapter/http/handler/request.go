@@ -4,32 +4,63 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"mime"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/andrewhigh08/team-task-nexus/internal/adapter/http/response"
 	"github.com/andrewhigh08/team-task-nexus/internal/pkg/apperror"
 )
 
 const msgPositive = "must be a positive integer"
 
-// decodeJSON decodes the request body into dst. Unknown fields and anything after the JSON
-// value are rejected, so that a misspelled field is reported instead of silently ignored.
-func decodeJSON(r *http.Request, dst any) error {
+// jsonMediaType is the media type request bodies must be sent in.
+const jsonMediaType = "application/json"
+
+// decodeJSON decodes the JSON request body into dst and reports whether it could. When it
+// could not, the error response has been written: 415 for a body that is not declared as
+// application/json, 413 for one over the body limit and 400 for a malformed one. Unknown
+// fields and anything after the JSON value count as malformed, so that a misspelled field is
+// reported instead of silently ignored.
+func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
+	if err := readJSON(r, dst); err != nil {
+		response.Error(w, r, err)
+		return false
+	}
+	return true
+}
+
+func readJSON(r *http.Request, dst any) error {
+	if r.ContentLength != 0 && !isJSON(r.Header.Get("Content-Type")) {
+		return apperror.UnsupportedMediaType("request body must be " + jsonMediaType)
+	}
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
-		return errInvalidBody(err)
+		return bodyError(err)
 	}
 	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return errInvalidBody(err)
+		return bodyError(err)
 	}
 	return nil
 }
 
-func errInvalidBody(cause error) error {
+// isJSON reports whether contentType declares JSON; parameters such as charset do not matter.
+func isJSON(contentType string) bool {
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	return err == nil && mediaType == jsonMediaType
+}
+
+// bodyError maps a failure to decode the body: a body over the limit is too large, anything
+// else is malformed.
+func bodyError(cause error) error {
+	var tooLarge *http.MaxBytesError
+	if errors.As(cause, &tooLarge) {
+		return apperror.PayloadTooLarge(tooLarge.Limit)
+	}
 	err := apperror.BadRequest("invalid request body")
 	err.Err = cause
 	return err

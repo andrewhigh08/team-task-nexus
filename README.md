@@ -26,6 +26,7 @@ handler → service → repository
 
 ```
 cmd/api/main.go                     — точка входа: конфигурация, логгер, сигналы
+api/openapi.yaml                     — контракт API (OpenAPI 3.1), встроен в бинарник
 migrations/                          — SQL-миграции, встроены в бинарник и применяются при старте
 internal/
 ├── app/                             — сборка приложения, MySQL/Redis, миграции, HTTP-сервер, graceful shutdown
@@ -38,7 +39,7 @@ internal/
 ├── pkg/metrics/                     — коллекторы Prometheus (префикс tasknexus_)
 └── adapter/
     ├── http/handler/                — HTTP-обработчики
-    ├── http/middleware/             — JWT, rate limit, метрики, логирование
+    ├── http/middleware/             — request id, recovery, access log, метрики, заголовки, JWT, rate limit
     ├── http/response/              — единый формат ответа API
     ├── mysqlrepo/                  — sqlx-репозитории, transactional outbox
     ├── notify/                     — доставка событий: webhook или лог
@@ -58,6 +59,9 @@ internal/
 - **outbox** — события для доставки внешним системам (transactional outbox)
 
 ## API
+
+Полный контракт со схемами запросов, ответов и кодов ошибок — [`api/openapi.yaml`](api/openapi.yaml);
+запущенный сервис отдаёт его по `GET /openapi.yaml`.
 
 ### Аутентификация
 | Метод | Путь | Описание |
@@ -100,8 +104,10 @@ internal/
 ### Системные
 | Метод | Путь | Описание |
 |-------|------|----------|
-| GET | `/health` | Health check |
+| GET | `/health/live` | Liveness: процесс обслуживает запросы |
+| GET | `/health/ready` | Readiness: MySQL и Redis отвечают (503, если нет) |
 | GET | `/metrics` | Метрики Prometheus |
+| GET | `/openapi.yaml` | Контракт API (OpenAPI 3.1) |
 
 ## Быстрый старт
 
@@ -186,4 +192,6 @@ make lint
 - **Изоляция команд**: задачи, история и комментарии видны только участникам команды; чужая команда или задача отвечает 404, а не 403
 - **Сложные SQL**: коррелированные подзапросы для статистики, CTE с оконной функцией RANK, запрос задач бывших участников
 - **Graceful shutdown**: корректное завершение HTTP-сервера с таймаутом; после него останавливается диспетчер outbox, дождавшись текущей доставки; запись её результата и возврат остатка пачки ограничены 5 с каждая, поэтому зависшая БД не затягивает остановку
-- **Метрики Prometheus**: счётчики запросов, гистограммы latency, gauge активных соединений, решения rate limiter (`tasknexus_rate_limit_decisions_total{scope,result}`), обращения к кешу (`tasknexus_cache_requests_total{cache,result}`), доставка событий outbox (`tasknexus_outbox_events_total{type,result}`)
+- **HTTP-слой**: каждый ответ содержит `X-Request-ID` — id клиента, если это 1–64 символа `[A-Za-z0-9._-]`, иначе сгенерированный; он же есть в каждой записи лога запроса. Паника в обработчике логируется со стеком и превращается в 500 `INTERNAL_ERROR`. Access log пишет метод, шаблон маршрута, статус, размер ответа, длительность и пользователя; пробы и `/metrics` — на уровне debug. Ответы несут `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, ответы `/api` — ещё `Cache-Control: no-store`. Тело запроса принимается только как `application/json` (иначе 415), не больше 1 MiB (иначе 413), без неизвестных полей и данных после JSON (иначе 400); неизвестный путь получает 404 `NOT_FOUND` в общем формате ошибки
+- **Health checks**: `/health/live` отвечает 200, пока процесс обслуживает запросы, и не проверяет зависимости — недоступность MySQL или Redis не повод перезапускать процесс. `/health/ready` параллельно пингует MySQL и Redis, каждую проверку не дольше 2 с, и при отказе отвечает 503 с именем упавшей проверки: `{"status":"not_ready","checks":{"mysql":"ok","redis":"unavailable"}}`
+- **Метрики Prometheus**: HTTP-запросы `tasknexus_http_requests_total{method,route,status}`, их длительность `tasknexus_http_request_duration_seconds{method,route}` и число запросов в обработке `tasknexus_http_requests_in_flight`; `route` — шаблон маршрута (`/api/v1/tasks/{id}`), для путей без маршрута `unmatched`, а нестандартные методы считаются как `other`, поэтому число серий ограничено. Решения rate limiter (`tasknexus_rate_limit_decisions_total{scope,result}`), обращения к кешу (`tasknexus_cache_requests_total{cache,result}`), доставка событий outbox (`tasknexus_outbox_events_total{type,result}`)

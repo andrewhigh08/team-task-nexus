@@ -71,13 +71,30 @@ func Error(w http.ResponseWriter, r *http.Request, err error) {
 
 	body := &ErrorBody{Code: appErr.Code, Message: appErr.Message, Details: appErr.Details}
 	if appErr.Code == apperror.CodeInternal {
-		body = &ErrorBody{Code: apperror.CodeInternal, Message: internalErrorMessage}
+		body = internalError()
 	}
 	write(w, status, Envelope{Success: false, Error: body})
 }
 
-func write(w http.ResponseWriter, status int, envelope Envelope) {
-	body, err := json.Marshal(envelope)
+// InternalError writes the generic 500 INTERNAL_ERROR envelope. Unlike Error it logs nothing:
+// it serves callers that have already logged the failure in more detail, such as the panic
+// recovery.
+func InternalError(w http.ResponseWriter) {
+	write(w, http.StatusInternalServerError, Envelope{Success: false, Error: internalError()})
+}
+
+func internalError() *ErrorBody {
+	return &ErrorBody{Code: apperror.CodeInternal, Message: internalErrorMessage}
+}
+
+// Plain writes v as JSON with the given status, outside the envelope. Only the health probes
+// use it: their bodies follow the conventions of probes rather than those of the API.
+func Plain(w http.ResponseWriter, status int, v any) {
+	write(w, status, v)
+}
+
+func write(w http.ResponseWriter, status int, v any) {
+	body, err := json.Marshal(v)
 	if err != nil {
 		status, body = http.StatusInternalServerError, internalErrorBody
 	} else {

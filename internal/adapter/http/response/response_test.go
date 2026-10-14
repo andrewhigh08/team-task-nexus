@@ -72,6 +72,28 @@ func TestJSON_UnencodablePayload(t *testing.T) {
 	assert.JSONEq(t, `{"success":false,"error":{"code":"INTERNAL_ERROR","message":"internal server error"}}`, rec.Body.String())
 }
 
+func TestInternalError(t *testing.T) {
+	t.Parallel()
+	rec := httptest.NewRecorder()
+
+	InternalError(rec)
+
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	assert.Equal(t, "application/json", rec.Header().Get("Content-Type"))
+	assert.JSONEq(t, `{"success":false,"error":{"code":"INTERNAL_ERROR","message":"internal server error"}}`, rec.Body.String())
+}
+
+func TestPlain(t *testing.T) {
+	t.Parallel()
+	rec := httptest.NewRecorder()
+
+	Plain(rec, http.StatusServiceUnavailable, map[string]string{"status": "not_ready"})
+
+	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
+	assert.Equal(t, "application/json", rec.Header().Get("Content-Type"))
+	assert.JSONEq(t, `{"status":"not_ready"}`, rec.Body.String(), "the body is not wrapped in the envelope")
+}
+
 func TestError(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

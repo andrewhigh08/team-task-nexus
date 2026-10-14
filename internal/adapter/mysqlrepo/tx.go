@@ -1,4 +1,5 @@
-// Package mysqlrepo implements the repository ports on MySQL with sqlx.
+// Package mysqlrepo implements the repository ports, the transaction manager and the
+// readiness check on MySQL with sqlx.
 package mysqlrepo
 
 import (

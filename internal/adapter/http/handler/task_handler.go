@@ -25,8 +25,7 @@ func (h *TaskHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req createTaskRequest
-	if err := decodeJSON(r, &req); err != nil {
-		response.Error(w, r, err)
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 	in, err := req.toInput()
@@ -121,8 +120,7 @@ func (h *TaskHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req updateTaskRequest
-	if err = decodeJSON(r, &req); err != nil {
-		response.Error(w, r, err)
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 	in, err := req.toInput()

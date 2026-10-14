@@ -3,9 +3,45 @@
 package metrics
 
 import (
+	"strconv"
+	"time"
+
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
+
+// RouteUnmatched is the route label of requests that matched no route. Labeling them by their
+// path instead would let every client create new series at will.
+const RouteUnmatched = "unmatched"
+
+// MethodOther is the method label of requests with a method outside the standard ones, which
+// net/http passes on as it was sent, for the same reason.
+const MethodOther = "other"
+
+// HTTPRequests counts served HTTP requests by method, route pattern and status.
+var HTTPRequests = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "tasknexus_http_requests_total",
+	Help: "Number of served HTTP requests by method, route and status.",
+}, []string{"method", "route", "status"})
+
+// HTTPRequestDuration observes how long serving HTTP requests took, by method and route pattern.
+var HTTPRequestDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
+	Name:    "tasknexus_http_request_duration_seconds",
+	Help:    "Duration of serving HTTP requests in seconds by method and route.",
+	Buckets: prometheus.DefBuckets,
+}, []string{"method", "route"})
+
+// HTTPRequestsInFlight is the number of HTTP requests being served.
+var HTTPRequestsInFlight = promauto.NewGauge(prometheus.GaugeOpts{
+	Name: "tasknexus_http_requests_in_flight",
+	Help: "Number of HTTP requests being served.",
+})
+
+// ObserveHTTPRequest records a served request in HTTPRequests and HTTPRequestDuration.
+func ObserveHTTPRequest(method, route string, status int, elapsed time.Duration) {
+	HTTPRequests.WithLabelValues(method, route, strconv.Itoa(status)).Inc()
+	HTTPRequestDuration.WithLabelValues(method, route).Observe(elapsed.Seconds())
+}
 
 // Values of the scope label of RateLimitDecisions: the per-user limit of the authenticated
 // API and the per-IP limit of registration and login.

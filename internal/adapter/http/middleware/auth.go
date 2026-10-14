@@ -65,9 +65,11 @@ func unauthorized(w http.ResponseWriter, r *http.Request, message string) {
 }
 
 // WithUserID returns a copy of ctx carrying the authenticated user id, where UserIDFrom and
-// the request logger find it. Authenticate calls it for every admitted request; tests use it
-// to stand in for the middleware.
+// the request logger find it, and reports the user to the access log of the request.
+// Authenticate calls it for every admitted request; tests use it to stand in for the
+// middleware.
 func WithUserID(ctx context.Context, userID int64) context.Context {
+	recordUser(ctx, userID)
 	ctx = context.WithValue(ctx, userIDKey{}, userID)
 	return logger.WithUserIDContext(ctx, userID)
 }

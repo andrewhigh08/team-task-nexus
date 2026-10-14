@@ -1,0 +1,1590 @@
+openapi: 3.1.0
+info:
+  title: Team Task Nexus API
+  version: 1.0.0
+  summary: Task management for teams.
+  description: |
+    Teams, their members and their tasks, with change history, comments and team analytics.
+
+    **Envelope.** Every endpoint under `/api/v1` answers with a JSON envelope:
+    `{"success": true, "data": ...}` on success, with `meta` added to paged lists, and
+    `{"success": false, "error": {"code", "message", "details"}}` on failure. `code` is one of
+    the values of `ErrorCode`; clients should branch on it, not on `message`. Empty lists are
+    `[]`, never `null`. A path that matches no endpoint gets 404 `NOT_FOUND` in the envelope too.
+    The probes, the metrics and this document are served without the envelope.
+
+    **Authentication.** Every endpoint under `/api/v1` except registration and login requires
+    `Authorization: Bearer <access token>`; the scheme is case-insensitive. Tokens are issued by
+    registration and login and expire after `expires_in` seconds.
+
+    **Access.** A team, or a task of a team, the caller is not a member of is answered with
+    404, exactly like one that does not exist, so ids cannot be probed. A member lacking the
+    role an operation needs gets 403.
+
+    **Requests.** Bodies must be sent as `application/json` (415 otherwise), must not exceed
+    1 MiB (413) and must not contain unknown fields (400). Malformed ids and query parameters
+    are rejected with 400, never ignored.
+
+    **Rate limits.** Registration and login are limited per client address, every other
+    endpoint under `/api/v1` per user. Limited responses carry `X-RateLimit-Limit` and
+    `X-RateLimit-Remaining`; a rejected request gets 429 with `Retry-After`.
+
+    **Request ids.** Every response carries `X-Request-ID`. A client may send its own id of 1 to
+    64 characters of `[A-Za-z0-9._-]`; any other value is replaced by a generated one. Quote
+    the id when reporting a problem: every log record of the request carries it.
+
+    Timestamps are RFC 3339 in UTC; due dates are calendar dates (`YYYY-MM-DD`).
+  license:
+    name: MIT
+    identifier: MIT
+servers:
+  - url: /
+    description: The server this document is served by
+tags:
+  - name: auth
+    description: Registration and login.
+  - name: teams
+    description: Teams and their members.
+  - name: tasks
+    description: Tasks, their change history and comments.
+  - name: analytics
+    description: Statistics over teams and tasks.
+  - name: operations
+    description: Probes, metrics and this document.
+security:
+  - bearerAuth: []
+
+paths:
+  /health/live:
+    get:
+      operationId: getLiveness
+      tags: [operations]
+      summary: Liveness probe
+      description: Answers 200 for as long as the process serves requests. No dependency is checked.
+      security: []
+      responses:
+        '200':
+          description: The process is alive.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Liveness'
+
+  /health/ready:
+    get:
+      operationId: getReadiness
+      tags: [operations]
+      summary: Readiness probe
+      description: |
+        Pings MySQL and Redis concurrently, each within 2 seconds. Answers 200 when both answer
+        and 503 when one does not; the body names the outcome of each check, never the cause.
+      security: []
+      responses:
+        '200':
+          description: Every dependency answers.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Readiness'
+              example:
+                status: ready
+                checks: {mysql: ok, redis: ok}
+        '503':
+          description: At least one dependency does not answer.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Readiness'
+              example:
+                status: not_ready
+                checks: {mysql: ok, redis: unavailable}
+
+  /metrics:
+    get:
+      operationId: getMetrics
+      tags: [operations]
+      summary: Prometheus metrics
+      description: |
+        The metrics of the process in the Prometheus exposition format. The service's own
+        metrics start with `tasknexus_`: HTTP requests by method, route pattern and status,
+        rate limiter decisions, task list cache lookups and outbox deliveries.
+      security: []
+      responses:
+        '200':
+          description: The current metrics.
+          content:
+            text/plain:
+              schema:
+                type: string
+              example: |
+                # HELP tasknexus_http_requests_in_flight Number of HTTP requests being served.
+                # TYPE tasknexus_http_requests_in_flight gauge
+                tasknexus_http_requests_in_flight 1
+
+  /openapi.yaml:
+    get:
+      operationId: getOpenAPI
+      tags: [operations]
+      summary: This document
+      security: []
+      responses:
+        '200':
+          description: The OpenAPI document of the API.
+          content:
+            application/yaml:
+              schema:
+                type: string
+
+  /api/v1/register:
+    post:
+      operationId: register
+      tags: [auth]
+      summary: Register an account
+      description: |
+        Creates an account and returns an access token for it. The email is stored trimmed and
+        in lower case and must be unique.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: The account was created.
+          headers:
+            X-RateLimit-Limit:
+              $ref: '#/components/headers/RateLimitLimit'
+            X-RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimitRemaining'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/login:
+    post:
+      operationId: login
+      tags: [auth]
+      summary: Log in
+      description: |
+        Exchanges credentials for an access token. An unknown email and a wrong password get
+        the same answer, so it does not reveal which emails are registered.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: The credentials are valid.
+          headers:
+            X-RateLimit-Limit:
+              $ref: '#/components/headers/RateLimitLimit'
+            X-RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimitRemaining'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/teams:
+    post:
+      operationId: createTeam
+      tags: [teams]
+      summary: Create a team
+      description: Creates a team owned by the caller.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTeamRequest'
+      responses:
+        '201':
+          description: The team was created.
+          headers:
+            X-RateLimit-Limit:
+              $ref: '#/components/headers/RateLimitLimit'
+            X-RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimitRemaining'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeamResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    get:
+      operationId: listTeams
+      tags: [teams]
+      summary: List the caller's teams
+      description: The teams the caller is a member of, newest first, each with the caller's role.
+      responses:
+        '200':
+          description: The caller's teams.
+          headers:
+            X-RateLimit-Limit:
+              $ref: '#/components/headers/RateLimitLimit'
+            X-RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimitRemaining'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeamListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/teams/stats:
+    get:
+      operationId: getTeamStats
+      tags: [analytics]
+      summary: Statistics of the caller's teams
+      description: |
+        For every team of the caller: the number of members, of tasks not done, and of tasks
+        completed in the last 7 days.
+      responses:
+        '200':
+          description: One entry per team of the caller.
+          headers:
+            X-RateLimit-Limit:
+              $ref: '#/components/headers/RateLimitLimit'
+            X-RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimitRemaining'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeamStatsListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/teams/{id}:
+    parameters:
+      - $ref: '#/components/parameters/TeamID'
+    get:
+      operationId: getTeam
+      tags: [teams]
+      summary: Get a team
+      description: Any member may read the team.
+      responses:
+        '200':
+          description: The team.
+          headers:
+            X-RateLimit-Limit:
+              $ref: '#/components/headers/RateLimitLimit'
+            X-RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimitRemaining'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeamResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/teams/{id}/members:
+    parameters:
+      - $ref: '#/components/parameters/TeamID'
+    get:
+      operationId: listTeamMembers
+      tags: [teams]
+      summary: List the members of a team
+      description: Any member may list the members, ordered by role (owner, admins, members) and then by name.
+      responses:
+        '200':
+          description: The members of the team.
+          headers:
+            X-RateLimit-Limit:
+              $ref: '#/components/headers/RateLimitLimit'
+            X-RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimitRemaining'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MemberListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      operationId: addTeamMember
+      tags: [teams]
+      summary: Add a member to a team
+      description: |
+        Adds a registered user, found by email, to the team. Only the owner and admins may add
+        members, and only the owner may add admins. An unknown email is answered with 404, a
+        user who is already a member with 409.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddMemberRequest'
+      responses:
+        '201':
+          description: The user is now a member.
+          headers:
+            X-RateLimit-Limit:
+              $ref: '#/components/headers/RateLimitLimit'
+            X-RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimitRemaining'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MemberResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/teams/{id}/members/{user_id}:
+    parameters:
+      - $ref: '#/components/parameters/TeamID'
+      - $ref: '#/components/parameters/MemberUserID'
+    delete:
+      operationId: removeTeamMember
+      tags: [teams]
+      summary: Remove a member from a team
+      description: |
+        The owner may remove anyone but themselves, since ownership cannot be transferred; an
+        admin may remove plain members only; any member but the owner may remove themselves to
+        leave the team. Tasks assigned to the removed member keep their assignee: the
+        orphaned assignments report lists them for reassignment.
+      responses:
+        '204':
+          description: The user is no longer a member.
+          headers:
+            X-RateLimit-Limit:
+              $ref: '#/components/headers/RateLimitLimit'
+            X-RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimitRemaining'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/teams/{id}/top-contributors:
+    parameters:
+      - $ref: '#/components/parameters/TeamID'
+    get:
+      operationId: getTopContributors
+      tags: [analytics]
+      summary: Top contributors of a team
+      description: |
+        The current members who completed the most tasks in the last 30 days, ranked with ties
+        sharing a rank; members ranked 3rd or better are returned. Members who completed no
+        task are not listed.
+      responses:
+        '200':
+          description: The top contributors, best first.
+          headers:
+            X-RateLimit-Limit:
+              $ref: '#/components/headers/RateLimitLimit'
+            X-RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimitRemaining'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TopContributorListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/teams/{id}/orphaned-assignees:
+    parameters:
+      - $ref: '#/components/parameters/TeamID'
+    get:
+      operationId: listOrphanedAssignments
+      tags: [analytics]
+      summary: Tasks assigned to former members
+      description: The tasks of the team whose assignee has left it. Only the owner and admins may see them.
+      responses:
+        '200':
+          description: The orphaned assignments.
+          headers:
+            X-RateLimit-Limit:
+              $ref: '#/components/headers/RateLimitLimit'
+            X-RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimitRemaining'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrphanedAssignmentListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/tasks:
+    post:
+      operationId: createTask
+      tags: [tasks]
+      summary: Create a task
+      description: |
+        Creates a task in a team of the caller. The assignee, if any, must be a member of the
+        team; assigning the task publishes a `task.assigned` event.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTaskRequest'
+      responses:
+        '201':
+          description: The task was created.
+          headers:
+            X-RateLimit-Limit:
+              $ref: '#/components/headers/RateLimitLimit'
+            X-RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimitRemaining'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    get:
+      operationId: listTasks
+      tags: [tasks]
+      summary: List tasks
+      description: |
+        A page of the tasks of the caller's teams, newest first, narrowed by the filters.
+        Without `team_id` the tasks of all the caller's teams are listed; a `team_id` of a team
+        the caller is not a member of is answered with 404.
+      parameters:
+        - $ref: '#/components/parameters/TeamFilter'
+        - $ref: '#/components/parameters/StatusFilter'
+        - $ref: '#/components/parameters/AssigneeFilter'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: One page of matching tasks.
+          headers:
+            X-RateLimit-Limit:
+              $ref: '#/components/headers/RateLimitLimit'
+            X-RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimitRemaining'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskPageResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/tasks/{id}:
+    parameters:
+      - $ref: '#/components/parameters/TaskID'
+    get:
+      operationId: getTask
+      tags: [tasks]
+      summary: Get a task
+      description: Any member of the task's team may read it.
+      responses:
+        '200':
+          description: The task.
+          headers:
+            X-RateLimit-Limit:
+              $ref: '#/components/headers/RateLimitLimit'
+            X-RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimitRemaining'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    patch:
+      operationId: updateTask
+      tags: [tasks]
+      summary: Update a task
+      description: |
+        Changes the fields present in the body and keeps the others; `null` clears
+        `assignee_id` and `due_date`. Any status may follow any other; `completed_at` is set
+        when the task becomes done and cleared when it leaves done. Every changed field is
+        recorded in the history; an update that changes nothing records nothing. Assigning the
+        task to someone new publishes a `task.assigned` event.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateTaskRequest'
+            examples:
+              start:
+                summary: Start working on the task
+                value: {status: in_progress, assignee_id: 3}
+              unassign:
+                summary: Clear the assignee and the due date
+                value: {assignee_id: null, due_date: null}
+      responses:
+        '200':
+          description: The task after the update.
+          headers:
+            X-RateLimit-Limit:
+              $ref: '#/components/headers/RateLimitLimit'
+            X-RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimitRemaining'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/tasks/{id}/history:
+    parameters:
+      - $ref: '#/components/parameters/TaskID'
+    get:
+      operationId: getTaskHistory
+      tags: [tasks]
+      summary: Change history of a task
+      description: Every recorded change of a field, newest first.
+      responses:
+        '200':
+          description: The changes.
+          headers:
+            X-RateLimit-Limit:
+              $ref: '#/components/headers/RateLimitLimit'
+            X-RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimitRemaining'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskChangeListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/tasks/{id}/comments:
+    parameters:
+      - $ref: '#/components/parameters/TaskID'
+    post:
+      operationId: createComment
+      tags: [tasks]
+      summary: Comment on a task
+      description: |
+        Any member of the task's team may comment. The comment publishes a `task.commented`
+        event naming the task's creator and assignee, so that they can be notified.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCommentRequest'
+      responses:
+        '201':
+          description: The comment was added.
+          headers:
+            X-RateLimit-Limit:
+              $ref: '#/components/headers/RateLimitLimit'
+            X-RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimitRemaining'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommentResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    get:
+      operationId: listComments
+      tags: [tasks]
+      summary: List the comments of a task
+      description: Every comment of the task, oldest first.
+      responses:
+        '200':
+          description: The comments.
+          headers:
+            X-RateLimit-Limit:
+              $ref: '#/components/headers/RateLimitLimit'
+            X-RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimitRemaining'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommentListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: An access token issued by registration or login.
+
+  parameters:
+    TeamID:
+      name: id
+      in: path
+      required: true
+      description: Id of the team.
+      schema:
+        $ref: '#/components/schemas/ID'
+    TaskID:
+      name: id
+      in: path
+      required: true
+      description: Id of the task.
+      schema:
+        $ref: '#/components/schemas/ID'
+    MemberUserID:
+      name: user_id
+      in: path
+      required: true
+      description: Id of the member's user.
+      schema:
+        $ref: '#/components/schemas/ID'
+    TeamFilter:
+      name: team_id
+      in: query
+      description: Only tasks of this team.
+      schema:
+        $ref: '#/components/schemas/ID'
+    StatusFilter:
+      name: status
+      in: query
+      description: Only tasks in this status.
+      schema:
+        $ref: '#/components/schemas/TaskStatus'
+    AssigneeFilter:
+      name: assignee_id
+      in: query
+      description: Only tasks assigned to this user.
+      schema:
+        $ref: '#/components/schemas/ID'
+    Page:
+      name: page
+      in: query
+      description: Number of the page, starting at 1.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 10000
+        default: 1
+    PageSize:
+      name: page_size
+      in: query
+      description: Number of tasks per page.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+
+  headers:
+    RateLimitLimit:
+      description: Number of requests admitted per minute.
+      schema:
+        type: integer
+        examples: [100]
+    RateLimitRemaining:
+      description: Number of further requests the current minute admits.
+      schema:
+        type: integer
+        examples: [99]
+    RetryAfter:
+      description: Seconds to wait until a request is admitted again.
+      schema:
+        type: integer
+        minimum: 1
+        examples: [13]
+    WWWAuthenticate:
+      description: The authentication scheme the API expects.
+      schema:
+        type: string
+        const: Bearer
+
+  responses:
+    BadRequest:
+      description: |
+        The request cannot be acted on. `BAD_REQUEST` is a body that is not valid JSON, holds
+        unknown fields or has fields of the wrong type. `VALIDATION_ERROR` is input that breaks a
+        rule, including malformed ids and query parameters; `details.fields` maps every
+        offending field to its problem.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            validation:
+              summary: Invalid input
+              value:
+                success: false
+                error:
+                  code: VALIDATION_ERROR
+                  message: invalid input
+                  details:
+                    fields: {title: is required, assignee_id: must be a member of the team}
+            malformed:
+              summary: Malformed body
+              value:
+                success: false
+                error: {code: BAD_REQUEST, message: invalid request body}
+    Unauthorized:
+      description: '`UNAUTHORIZED`: the bearer token is missing, malformed, expired or forged.'
+      headers:
+        WWW-Authenticate:
+          $ref: '#/components/headers/WWWAuthenticate'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error: {code: UNAUTHORIZED, message: invalid or expired token}
+    InvalidCredentials:
+      description: |
+        `UNAUTHORIZED`: the email is not registered or the password is wrong. The answer does
+        not say which, and carries no challenge: the endpoint takes credentials, not a token.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error: {code: UNAUTHORIZED, message: invalid email or password}
+    Forbidden:
+      description: '`FORBIDDEN`: the caller is a member of the team but lacks the role the operation needs.'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error: {code: FORBIDDEN, message: only the team owner and admins may do this}
+    NotFound:
+      description: |
+        `NOT_FOUND`: the resource does not exist, or belongs to a team the caller is not a
+        member of.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error:
+              code: NOT_FOUND
+              message: task not found
+              details: {resource: task, id: 42}
+    Conflict:
+      description: '`CONFLICT`: the resource already exists.'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error:
+              code: CONFLICT
+              message: user with this email already exists
+              details: {resource: user, field: email, value: alice@example.com}
+    PayloadTooLarge:
+      description: '`PAYLOAD_TOO_LARGE`: the body exceeds 1 MiB.'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error:
+              code: PAYLOAD_TOO_LARGE
+              message: request body is too large
+              details: {limit_bytes: 1048576}
+    UnsupportedMediaType:
+      description: '`UNSUPPORTED_MEDIA_TYPE`: the body is not declared as `application/json`.'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error: {code: UNSUPPORTED_MEDIA_TYPE, message: request body must be application/json}
+    TooManyRequests:
+      description: '`TOO_MANY_REQUESTS`: the rate limit is exhausted; retry after `Retry-After` seconds.'
+      headers:
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+        X-RateLimit-Limit:
+          $ref: '#/components/headers/RateLimitLimit'
+        X-RateLimit-Remaining:
+          $ref: '#/components/headers/RateLimitRemaining'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error:
+              code: TOO_MANY_REQUESTS
+              message: rate limit exceeded
+              details: {retry_after_seconds: 13}
+    InternalError:
+      description: '`INTERNAL_ERROR`: the server failed. The cause is logged under the request id, never sent.'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error: {code: INTERNAL_ERROR, message: internal server error}
+
+  schemas:
+    ID:
+      type: integer
+      format: int64
+      minimum: 1
+      examples: [42]
+
+    ErrorCode:
+      type: string
+      enum:
+        - BAD_REQUEST
+        - VALIDATION_ERROR
+        - UNAUTHORIZED
+        - FORBIDDEN
+        - NOT_FOUND
+        - CONFLICT
+        - UNSUPPORTED_MEDIA_TYPE
+        - PAYLOAD_TOO_LARGE
+        - TOO_MANY_REQUESTS
+        - SERVICE_UNAVAILABLE
+        - INTERNAL_ERROR
+
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          $ref: '#/components/schemas/ErrorCode'
+        message:
+          type: string
+          description: Human-readable explanation; not meant to be parsed.
+        details:
+          type: object
+          description: Structured context depending on the code, such as `fields` for `VALIDATION_ERROR`.
+          additionalProperties: true
+
+    ErrorResponse:
+      type: object
+      required: [success, error]
+      properties:
+        success:
+          const: false
+        error:
+          $ref: '#/components/schemas/Error'
+
+    PageMeta:
+      type: object
+      required: [page, page_size, total, total_pages]
+      properties:
+        page:
+          type: integer
+          examples: [1]
+        page_size:
+          type: integer
+          examples: [20]
+        total:
+          type: integer
+          description: Number of matching tasks on all pages.
+          examples: [41]
+        total_pages:
+          type: integer
+          examples: [3]
+
+    Liveness:
+      type: object
+      required: [status]
+      properties:
+        status:
+          const: ok
+
+    Readiness:
+      type: object
+      required: [status, checks]
+      properties:
+        status:
+          type: string
+          enum: [ready, not_ready]
+        checks:
+          type: object
+          description: The outcome of every dependency check.
+          additionalProperties:
+            type: string
+            enum: [ok, unavailable]
+
+    RegisterRequest:
+      type: object
+      additionalProperties: false
+      required: [email, password, full_name]
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 254
+          examples: [alice@example.com]
+        password:
+          type: string
+          description: 8 to 72 bytes.
+          minLength: 8
+          examples: [correct horse battery]
+        full_name:
+          type: string
+          minLength: 1
+          maxLength: 255
+          examples: [Alice Example]
+
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          examples: [alice@example.com]
+        password:
+          type: string
+          examples: [correct horse battery]
+
+    User:
+      type: object
+      required: [id, email, full_name, created_at]
+      properties:
+        id:
+          $ref: '#/components/schemas/ID'
+        email:
+          type: string
+          format: email
+          examples: [alice@example.com]
+        full_name:
+          type: string
+          examples: [Alice Example]
+        created_at:
+          type: string
+          format: date-time
+          examples: ['2026-03-14T09:26:53Z']
+
+    AuthResult:
+      type: object
+      required: [access_token, token_type, expires_in, user]
+      properties:
+        access_token:
+          type: string
+          description: 'A JWT to send as `Authorization: Bearer <access_token>`.'
+          examples: [eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI0MiJ9.signature]
+        token_type:
+          const: Bearer
+        expires_in:
+          type: integer
+          description: Seconds until the token expires.
+          examples: [86400]
+        user:
+          $ref: '#/components/schemas/User'
+
+    TeamRole:
+      type: string
+      enum: [owner, admin, member]
+
+    Team:
+      type: object
+      required: [id, name, description, owner_id, created_at, updated_at]
+      properties:
+        id:
+          $ref: '#/components/schemas/ID'
+        name:
+          type: string
+          examples: [Platform]
+        description:
+          type: string
+          examples: [Keeps the lights on]
+        owner_id:
+          $ref: '#/components/schemas/ID'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    TeamListItem:
+      description: A team with the caller's role in it.
+      allOf:
+        - $ref: '#/components/schemas/Team'
+        - type: object
+          required: [role]
+          properties:
+            role:
+              $ref: '#/components/schemas/TeamRole'
+
+    CreateTeamRequest:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name:
+          type: string
+          description: 1 to 255 characters after trimming.
+          minLength: 1
+          maxLength: 255
+          examples: [Platform]
+        description:
+          type: string
+          maxLength: 5000
+          default: ''
+          examples: [Keeps the lights on]
+
+    Member:
+      type: object
+      required: [user_id, email, full_name, role]
+      properties:
+        user_id:
+          $ref: '#/components/schemas/ID'
+        email:
+          type: string
+          format: email
+          examples: [nina@example.com]
+        full_name:
+          type: string
+          examples: [Nina New]
+        role:
+          $ref: '#/components/schemas/TeamRole'
+
+    AddMemberRequest:
+      type: object
+      additionalProperties: false
+      required: [email]
+      properties:
+        email:
+          type: string
+          format: email
+          description: Email of a registered user.
+          examples: [nina@example.com]
+        role:
+          type: string
+          enum: [admin, member]
+          default: member
+
+    TeamStats:
+      type: object
+      required: [team_id, name, member_count, open_tasks, done_last_7_days]
+      properties:
+        team_id:
+          $ref: '#/components/schemas/ID'
+        name:
+          type: string
+          examples: [Platform]
+        member_count:
+          type: integer
+          examples: [5]
+        open_tasks:
+          type: integer
+          description: Tasks not done.
+          examples: [12]
+        done_last_7_days:
+          type: integer
+          description: Tasks completed in the last 7 days.
+          examples: [4]
+
+    TopContributor:
+      type: object
+      required: [user_id, full_name, tasks_completed, rank]
+      properties:
+        user_id:
+          $ref: '#/components/schemas/ID'
+        full_name:
+          type: string
+          examples: [Ada Admin]
+        tasks_completed:
+          type: integer
+          examples: [7]
+        rank:
+          type: integer
+          description: 1 for the best; members with equal counts share a rank.
+          examples: [1]
+
+    OrphanedAssignment:
+      type: object
+      required: [task_id, task_title, assignee_id, assignee_name]
+      properties:
+        task_id:
+          $ref: '#/components/schemas/ID'
+        task_title:
+          type: string
+          examples: [Rotate the certificates]
+        assignee_id:
+          $ref: '#/components/schemas/ID'
+        assignee_name:
+          type: string
+          examples: [Former Member]
+
+    TaskStatus:
+      type: string
+      enum: [todo, in_progress, review, done]
+
+    TaskPriority:
+      type: integer
+      description: 1 low, 2 medium, 3 high.
+      enum: [1, 2, 3]
+
+    Task:
+      type: object
+      required:
+        - id
+        - team_id
+        - title
+        - description
+        - status
+        - priority
+        - creator_id
+        - assignee_id
+        - due_date
+        - completed_at
+        - created_at
+        - updated_at
+      properties:
+        id:
+          $ref: '#/components/schemas/ID'
+        team_id:
+          $ref: '#/components/schemas/ID'
+        title:
+          type: string
+          examples: [Rotate the certificates]
+        description:
+          type: string
+          examples: [Before they expire]
+        status:
+          $ref: '#/components/schemas/TaskStatus'
+        priority:
+          $ref: '#/components/schemas/TaskPriority'
+        creator_id:
+          $ref: '#/components/schemas/ID'
+        assignee_id:
+          type: [integer, 'null']
+          format: int64
+          examples: [3]
+        due_date:
+          type: [string, 'null']
+          format: date
+          examples: ['2026-04-01']
+        completed_at:
+          type: [string, 'null']
+          format: date-time
+          description: When the task was last set to done; null unless it is done.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateTaskRequest:
+      type: object
+      additionalProperties: false
+      required: [team_id, title]
+      properties:
+        team_id:
+          $ref: '#/components/schemas/ID'
+        title:
+          type: string
+          description: 1 to 255 characters after trimming.
+          minLength: 1
+          maxLength: 255
+          examples: [Rotate the certificates]
+        description:
+          type: string
+          maxLength: 10000
+          default: ''
+        priority:
+          allOf:
+            - $ref: '#/components/schemas/TaskPriority'
+          default: 2
+        assignee_id:
+          allOf:
+            - $ref: '#/components/schemas/ID'
+          description: A member of the team.
+        due_date:
+          type: string
+          format: date
+          examples: ['2026-04-01']
+
+    UpdateTaskRequest:
+      type: object
+      additionalProperties: false
+      description: Absent fields keep their value.
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 255
+        description:
+          type: string
+          maxLength: 10000
+        status:
+          $ref: '#/components/schemas/TaskStatus'
+        priority:
+          $ref: '#/components/schemas/TaskPriority'
+        assignee_id:
+          type: [integer, 'null']
+          format: int64
+          minimum: 1
+          description: A member of the team, or null to unassign the task.
+        due_date:
+          type: [string, 'null']
+          format: date
+          description: A calendar date, or null to clear it.
+
+    TaskChange:
+      type: object
+      required: [id, task_id, user_id, field, old_value, new_value, changed_at]
+      properties:
+        id:
+          $ref: '#/components/schemas/ID'
+        task_id:
+          $ref: '#/components/schemas/ID'
+        user_id:
+          description: Who made the change.
+          allOf:
+            - $ref: '#/components/schemas/ID'
+        field:
+          type: string
+          enum: [title, description, status, priority, assignee_id, due_date]
+        old_value:
+          type: string
+          description: The value before the change; empty when there was none.
+          examples: ['']
+        new_value:
+          type: string
+          description: The value after the change; empty when it was cleared.
+          examples: ['3']
+        changed_at:
+          type: string
+          format: date-time
+
+    Comment:
+      type: object
+      required: [id, task_id, user_id, content, created_at, updated_at]
+      properties:
+        id:
+          $ref: '#/components/schemas/ID'
+        task_id:
+          $ref: '#/components/schemas/ID'
+        user_id:
+          $ref: '#/components/schemas/ID'
+        content:
+          type: string
+          examples: [Renewed until 2027]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateCommentRequest:
+      type: object
+      additionalProperties: false
+      required: [content]
+      properties:
+        content:
+          type: string
+          description: 1 to 5000 characters after trimming.
+          minLength: 1
+          maxLength: 5000
+          examples: [Renewed until 2027]
+
+    AuthResponse:
+      type: object
+      required: [success, data]
+      properties:
+        success:
+          const: true
+        data:
+          $ref: '#/components/schemas/AuthResult'
+
+    TeamResponse:
+      type: object
+      required: [success, data]
+      properties:
+        success:
+          const: true
+        data:
+          $ref: '#/components/schemas/Team'
+
+    TeamListResponse:
+      type: object
+      required: [success, data]
+      properties:
+        success:
+          const: true
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/TeamListItem'
+
+    MemberResponse:
+      type: object
+      required: [success, data]
+      properties:
+        success:
+          const: true
+        data:
+          $ref: '#/components/schemas/Member'
+
+    MemberListResponse:
+      type: object
+      required: [success, data]
+      properties:
+        success:
+          const: true
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Member'
+
+    TeamStatsListResponse:
+      type: object
+      required: [success, data]
+      properties:
+        success:
+          const: true
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/TeamStats'
+
+    TopContributorListResponse:
+      type: object
+      required: [success, data]
+      properties:
+        success:
+          const: true
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/TopContributor'
+
+    OrphanedAssignmentListResponse:
+      type: object
+      required: [success, data]
+      properties:
+        success:
+          const: true
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrphanedAssignment'
+
+    TaskResponse:
+      type: object
+      required: [success, data]
+      properties:
+        success:
+          const: true
+        data:
+          $ref: '#/components/schemas/Task'
+
+    TaskPageResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          const: true
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Task'
+        meta:
+          $ref: '#/components/schemas/PageMeta'
+
+    TaskChangeListResponse:
+      type: object
+      required: [success, data]
+      properties:
+        success:
+          const: true
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/TaskChange'
+
+    CommentResponse:
+      type: object
+      required: [success, data]
+      properties:
+        success:
+          const: true
+        data:
+          $ref: '#/components/schemas/Comment'
+
+    CommentListResponse:
+      type: object
+      required: [success, data]
+      properties:
+        success:
+          const: true
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Comment'

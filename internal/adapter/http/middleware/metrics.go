@@ -2,66 +2,49 @@ package middleware
 
 import (
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
+
+	"github.com/andrewhigh08/team-task-nexus/internal/pkg/metrics"
 )
 
-var (
-	httpRequestsTotal = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "http_requests_total",
-			Help: "Total number of HTTP requests",
-		},
-		[]string{"method", "path", "status"},
-	)
-
-	httpRequestDuration = promauto.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Name:    "http_request_duration_seconds",
-			Help:    "HTTP request duration in seconds",
-			Buckets: prometheus.DefBuckets,
-		},
-		[]string{"method", "path"},
-	)
-
-	activeRequests = promauto.NewGauge(
-		prometheus.GaugeOpts{
-			Name: "http_active_requests",
-			Help: "Number of active HTTP requests",
-		},
-	)
-)
-
-type statusWriter struct {
-	http.ResponseWriter
-	status int
-}
-
-func (w *statusWriter) WriteHeader(status int) {
-	w.status = status
-	w.ResponseWriter.WriteHeader(status)
-}
-
+// Metrics records every request in the HTTP metrics: it is counted in flight while it is
+// served, then by method, route and status, and its duration is observed by method and route.
+// The route is the pattern chi matched, so the number of series stays bounded whatever paths
+// and methods clients send.
 func Metrics(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		activeRequests.Inc()
-		defer activeRequests.Dec()
-
-		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
-		next.ServeHTTP(sw, r)
-
-		duration := time.Since(start).Seconds()
-		routePattern := chi.RouteContext(r.Context()).RoutePattern()
-		if routePattern == "" {
-			routePattern = r.URL.Path
-		}
-
-		httpRequestsTotal.WithLabelValues(r.Method, routePattern, strconv.Itoa(sw.status)).Inc()
-		httpRequestDuration.WithLabelValues(r.Method, routePattern).Observe(duration)
+		metrics.HTTPRequestsInFlight.Inc()
+		rec := newResponseRecorder(w)
+		completed := false
+		// Deferred, so that a request whose handler panics is counted too.
+		defer func() {
+			metrics.HTTPRequestsInFlight.Dec()
+			metrics.ObserveHTTPRequest(methodLabel(r.Method), routeLabel(r), rec.finalStatus(completed), time.Since(start))
+		}()
+		next.ServeHTTP(rec, r)
+		completed = true
 	})
+}
+
+// routeLabel returns the pattern of the route chi matched r with, or metrics.RouteUnmatched.
+// chi fills the pattern in while routing, so it is complete once the request has been served.
+func routeLabel(r *http.Request) string {
+	if pattern := chi.RouteContext(r.Context()).RoutePattern(); pattern != "" {
+		return pattern
+	}
+	return metrics.RouteUnmatched
+}
+
+// methodLabel returns method if it is a standard one and metrics.MethodOther otherwise.
+func methodLabel(method string) string {
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut, http.MethodPatch,
+		http.MethodDelete, http.MethodConnect, http.MethodOptions, http.MethodTrace:
+		return method
+	default:
+		return metrics.MethodOther
+	}
 }

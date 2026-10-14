@@ -55,8 +55,7 @@ func (h *CommentHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req createCommentRequest
-	if err = decodeJSON(r, &req); err != nil {
-		response.Error(w, r, err)
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 

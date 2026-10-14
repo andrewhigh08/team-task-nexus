@@ -65,8 +65,7 @@ func NewAuthHandler(authSvc port.AuthService) *AuthHandler {
 // Register creates an account and answers 201 with a token for it.
 func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	var req registerRequest
-	if err := decodeJSON(r, &req); err != nil {
-		response.Error(w, r, err)
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 
@@ -86,8 +85,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 // Login answers 200 with a token for valid credentials.
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	var req loginRequest
-	if err := decodeJSON(r, &req); err != nil {
-		response.Error(w, r, err)
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 

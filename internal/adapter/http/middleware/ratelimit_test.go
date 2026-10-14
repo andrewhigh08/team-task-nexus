@@ -3,6 +3,7 @@ package middleware_test
 import (
 	"bytes"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -189,7 +190,8 @@ func TestRateLimit_CountsDecisions(t *testing.T) {
 			if tt.byIP {
 				limit = middleware.RateLimitByIP(limiter, testPerMinute, false)
 			}
-			req := httptest.NewRequestWithContext(middleware.WithUserID(t.Context(), 7), http.MethodPost, "/", http.NoBody)
+			ctx := logger.NewContext(middleware.WithUserID(t.Context(), 7), logger.New(logger.Config{Output: io.Discard}))
+			req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/", http.NoBody)
 			want := decisionCounts()
 			want[tt.wantScope+"/"+tt.wantResult]++
 

@@ -7,11 +7,12 @@ import (
 	"github.com/andrewhigh08/team-task-nexus/internal/adapter/http/handler"
 	"github.com/andrewhigh08/team-task-nexus/internal/adapter/mysqlrepo"
 	"github.com/andrewhigh08/team-task-nexus/internal/adapter/redisstore"
+	"github.com/andrewhigh08/team-task-nexus/internal/port"
 	"github.com/andrewhigh08/team-task-nexus/internal/service"
 )
 
 // newRouter builds the repositories, caches and services on the open connections and mounts
-// their handlers.
+// their handlers next to the probes, which ping MySQL and Redis.
 func (a *App) newRouter() (http.Handler, error) {
 	userRepo := mysqlrepo.NewUserRepo(a.db)
 	teamRepo := mysqlrepo.NewTeamRepo(a.db)
@@ -54,12 +55,17 @@ func (a *App) newRouter() (http.Handler, error) {
 		return nil, err
 	}
 
+	health := handler.NewHealthHandler(map[string]port.Pinger{
+		"mysql": mysqlrepo.NewPinger(a.db),
+		"redis": redisstore.NewPinger(a.rdb),
+	})
+
 	return apphttp.NewRouter(apphttp.RouterDeps{
 		AuthHandler:    handler.NewAuthHandler(authSvc),
 		TeamHandler:    handler.NewTeamHandler(teamSvc),
 		TaskHandler:    handler.NewTaskHandler(taskSvc),
 		CommentHandler: handler.NewCommentHandler(commentSvc),
-		HealthHandler:  handler.NewHealthHandler(),
+		HealthHandler:  health,
 		TokenVerifier:  authSvc,
 		RateLimiter:    redisstore.NewRateLimiter(a.rdb),
 		Logger:         a.base.WithComponent("http"),

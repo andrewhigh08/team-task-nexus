@@ -1,7 +1,7 @@
 // Package port defines the interfaces between the layers: the repositories and caches the
 // services depend on, the outbox and event sender behind the delivery of events, the token
-// verifier and rate limiter the HTTP middleware depends on, and the services the HTTP
-// handlers call.
+// verifier and rate limiter the HTTP middleware depends on, the services the HTTP handlers
+// call, and the pingers behind the readiness probe.
 package port
 
 import (

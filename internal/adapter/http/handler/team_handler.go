@@ -100,8 +100,7 @@ func (h *TeamHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req createTeamRequest
-	if err := decodeJSON(r, &req); err != nil {
-		response.Error(w, r, err)
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 
@@ -180,8 +179,7 @@ func (h *TeamHandler) AddMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req addMemberRequest
-	if err = decodeJSON(r, &req); err != nil {
-		response.Error(w, r, err)
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 
