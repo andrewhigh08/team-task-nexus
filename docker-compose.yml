@@ -13,9 +13,13 @@ services:
       redis:
         condition: service_healthy
     environment:
-      - APP_ENV=docker
-    volumes:
-      - ./configs/config.docker.yaml:/app/configs/config.yaml
+      DB_HOST: mysql
+      DB_USER: app
+      DB_PASSWORD: apppassword
+      DB_NAME: team_task_nexus
+      REDIS_ADDR: redis:6379
+      # Local development only; any real deployment supplies its own secret.
+      JWT_SECRET: local-development-only-jwt-secret-do-not-deploy
     restart: unless-stopped
 
   mysql:

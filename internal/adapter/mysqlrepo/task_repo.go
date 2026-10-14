@@ -1,4 +1,4 @@
-package mysql
+package mysqlrepo
 
 import (
 	"context"
@@ -7,19 +7,23 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/jmoiron/sqlx"
+
 	"github.com/andrewhigh08/team-task-nexus/internal/domain"
 	"github.com/andrewhigh08/team-task-nexus/internal/pkg/apperror"
-	"github.com/jmoiron/sqlx"
 )
 
+// TaskRepo stores tasks.
 type TaskRepo struct {
 	db *sqlx.DB
 }
 
+// NewTaskRepo returns a TaskRepo on db.
 func NewTaskRepo(db *sqlx.DB) *TaskRepo {
 	return &TaskRepo{db: db}
 }
 
+// Create inserts task and returns its id.
 func (r *TaskRepo) Create(ctx context.Context, task *domain.Task) (int64, error) {
 	q := getQuerier(ctx, r.db)
 	result, err := q.ExecContext(ctx,
@@ -34,19 +38,21 @@ func (r *TaskRepo) Create(ctx context.Context, task *domain.Task) (int64, error)
 	return result.LastInsertId()
 }
 
+// GetByID returns the task with the given id.
 func (r *TaskRepo) GetByID(ctx context.Context, id int64) (*domain.Task, error) {
 	q := getQuerier(ctx, r.db)
 	var task domain.Task
 	err := q.GetContext(ctx, &task, "SELECT * FROM tasks WHERE id = ?", id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, apperror.NotFound("task not found")
+			return nil, apperror.NotFound("task", id)
 		}
 		return nil, apperror.Internal("get task", err)
 	}
 	return &task, nil
 }
 
+// Update writes the mutable fields of task.
 func (r *TaskRepo) Update(ctx context.Context, task *domain.Task) error {
 	q := getQuerier(ctx, r.db)
 	_, err := q.ExecContext(ctx,
@@ -62,6 +68,7 @@ func (r *TaskRepo) Update(ctx context.Context, task *domain.Task) error {
 	return nil
 }
 
+// List returns one page of the tasks matching filter and the total number of matches.
 func (r *TaskRepo) List(ctx context.Context, filter domain.TaskFilter) ([]domain.Task, int, error) {
 	q := getQuerier(ctx, r.db)
 
@@ -116,6 +123,7 @@ func (r *TaskRepo) List(ctx context.Context, filter domain.TaskFilter) ([]domain
 	return tasks, total, nil
 }
 
+// GetOrphanedAssignees returns the tasks assigned to users who are no longer members of the task's team.
 func (r *TaskRepo) GetOrphanedAssignees(ctx context.Context) ([]domain.OrphanedAssignee, error) {
 	q := getQuerier(ctx, r.db)
 	var result []domain.OrphanedAssignee

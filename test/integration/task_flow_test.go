@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/andrewhigh08/team-task-nexus/internal/adapter/cache/redis"
-	mysqlrepo "github.com/andrewhigh08/team-task-nexus/internal/adapter/repository/mysql"
+	"github.com/andrewhigh08/team-task-nexus/internal/adapter/mysqlrepo"
+	"github.com/andrewhigh08/team-task-nexus/internal/adapter/redisstore"
 	"github.com/andrewhigh08/team-task-nexus/internal/domain"
 	"github.com/andrewhigh08/team-task-nexus/internal/service"
 	"github.com/stretchr/testify/assert"
@@ -24,7 +24,7 @@ func TestTaskCaching_Integration(t *testing.T) {
 	taskRepo := mysqlrepo.NewTaskRepo(testDB)
 	historyRepo := mysqlrepo.NewTaskHistoryRepo(testDB)
 	txManager := mysqlrepo.NewTransactionManager(testDB)
-	taskCache := redis.NewTaskCache(testRedis)
+	taskCache := redisstore.NewTaskCache(testRedis)
 	notifSvc := service.NewNotificationService()
 
 	authSvc := service.NewAuthService(userRepo, "test-secret", 24*time.Hour)
@@ -79,7 +79,7 @@ func TestTaskPagination_Integration(t *testing.T) {
 	taskRepo := mysqlrepo.NewTaskRepo(testDB)
 	historyRepo := mysqlrepo.NewTaskHistoryRepo(testDB)
 	txManager := mysqlrepo.NewTransactionManager(testDB)
-	taskCache := redis.NewTaskCache(testRedis)
+	taskCache := redisstore.NewTaskCache(testRedis)
 	notifSvc := service.NewNotificationService()
 
 	authSvc := service.NewAuthService(userRepo, "test-secret", 24*time.Hour)
@@ -130,7 +130,7 @@ func TestOrphanedAssignees_Integration(t *testing.T) {
 	taskRepo := mysqlrepo.NewTaskRepo(testDB)
 	historyRepo := mysqlrepo.NewTaskHistoryRepo(testDB)
 	txManager := mysqlrepo.NewTransactionManager(testDB)
-	taskCache := redis.NewTaskCache(testRedis)
+	taskCache := redisstore.NewTaskCache(testRedis)
 	notifSvc := service.NewNotificationService()
 
 	authSvc := service.NewAuthService(userRepo, "test-secret", 24*time.Hour)

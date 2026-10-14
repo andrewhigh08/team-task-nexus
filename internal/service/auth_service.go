@@ -63,11 +63,11 @@ func (s *AuthServiceImpl) Login(ctx context.Context, req domain.LoginRequest) (*
 
 	user, err := s.userRepo.GetByEmail(ctx, req.Email)
 	if err != nil {
-		return nil, apperror.ErrInvalidCredentials
+		return nil, errInvalidCredentials()
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
-		return nil, apperror.ErrInvalidCredentials
+		return nil, errInvalidCredentials()
 	}
 
 	token, err := s.generateToken(user.ID)

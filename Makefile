@@ -1,4 +1,4 @@
-.PHONY: build run test test-integration test-coverage lint migrate-up migrate-down docker-up docker-down
+.PHONY: build run test test-integration test-coverage lint docker-up docker-down
 
 APP_NAME=team-task-nexus
 BUILD_DIR=bin
@@ -23,12 +23,6 @@ test-coverage:
 
 lint:
 	golangci-lint run ./...
-
-migrate-up:
-	migrate -path migrations -database "mysql://app:apppassword@tcp(localhost:3306)/team_task_nexus" up
-
-migrate-down:
-	migrate -path migrations -database "mysql://app:apppassword@tcp(localhost:3306)/team_task_nexus" down
 
 docker-up:
 	docker-compose up --build -d

@@ -5,114 +5,123 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/go-chi/chi/v5"
+
 	"github.com/andrewhigh08/team-task-nexus/internal/adapter/http/middleware"
 	"github.com/andrewhigh08/team-task-nexus/internal/adapter/http/response"
 	"github.com/andrewhigh08/team-task-nexus/internal/domain"
 	"github.com/andrewhigh08/team-task-nexus/internal/pkg/apperror"
 	"github.com/andrewhigh08/team-task-nexus/internal/port"
-	"github.com/go-chi/chi/v5"
 )
 
+// TeamHandler serves teams, memberships and team analytics.
 type TeamHandler struct {
 	teamSvc port.TeamService
 }
 
+// NewTeamHandler returns a TeamHandler backed by teamSvc.
 func NewTeamHandler(teamSvc port.TeamService) *TeamHandler {
 	return &TeamHandler{teamSvc: teamSvc}
 }
 
+// Create adds a team owned by the caller.
 func (h *TeamHandler) Create(w http.ResponseWriter, r *http.Request) {
 	userID := middleware.GetUserID(r.Context())
 
 	var req domain.CreateTeamRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		response.Error(w, apperror.BadRequest("invalid request body"))
+		response.Error(w, r, apperror.BadRequest("invalid request body"))
 		return
 	}
 
 	team, err := h.teamSvc.Create(r.Context(), userID, req)
 	if err != nil {
-		response.Error(w, err)
+		response.Error(w, r, err)
 		return
 	}
 
 	response.JSON(w, http.StatusCreated, team)
 }
 
+// List returns the caller's teams.
 func (h *TeamHandler) List(w http.ResponseWriter, r *http.Request) {
 	userID := middleware.GetUserID(r.Context())
 
 	teams, err := h.teamSvc.ListByUserID(r.Context(), userID)
 	if err != nil {
-		response.Error(w, err)
+		response.Error(w, r, err)
 		return
 	}
 
 	response.JSON(w, http.StatusOK, teams)
 }
 
+// GetByID returns the team in the path.
 func (h *TeamHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 	userID := middleware.GetUserID(r.Context())
 	teamID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
-		response.Error(w, apperror.BadRequest("invalid team id"))
+		response.Error(w, r, apperror.BadRequest("invalid team id"))
 		return
 	}
 
 	team, err := h.teamSvc.GetByID(r.Context(), userID, teamID)
 	if err != nil {
-		response.Error(w, err)
+		response.Error(w, r, err)
 		return
 	}
 
 	response.JSON(w, http.StatusOK, team)
 }
 
+// Invite adds a registered user to the team in the path.
 func (h *TeamHandler) Invite(w http.ResponseWriter, r *http.Request) {
 	userID := middleware.GetUserID(r.Context())
 	teamID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
-		response.Error(w, apperror.BadRequest("invalid team id"))
+		response.Error(w, r, apperror.BadRequest("invalid team id"))
 		return
 	}
 
 	var req domain.InviteRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		response.Error(w, apperror.BadRequest("invalid request body"))
+		response.Error(w, r, apperror.BadRequest("invalid request body"))
 		return
 	}
 
 	if err := h.teamSvc.InviteUser(r.Context(), userID, teamID, req); err != nil {
-		response.Error(w, err)
+		response.Error(w, r, err)
 		return
 	}
 
 	response.JSON(w, http.StatusOK, map[string]string{"message": "user invited successfully"})
 }
 
+// GetStats returns statistics for the caller's teams.
 func (h *TeamHandler) GetStats(w http.ResponseWriter, r *http.Request) {
 	userID := middleware.GetUserID(r.Context())
 
 	stats, err := h.teamSvc.GetStats(r.Context(), userID)
 	if err != nil {
-		response.Error(w, err)
+		response.Error(w, r, err)
 		return
 	}
 
 	response.JSON(w, http.StatusOK, stats)
 }
 
+// GetTopContributors returns the most active members of the team in the path.
 func (h *TeamHandler) GetTopContributors(w http.ResponseWriter, r *http.Request) {
 	userID := middleware.GetUserID(r.Context())
 	teamID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
-		response.Error(w, apperror.BadRequest("invalid team id"))
+		response.Error(w, r, apperror.BadRequest("invalid team id"))
 		return
 	}
 
 	contributors, err := h.teamSvc.GetTopContributors(r.Context(), userID, teamID)
 	if err != nil {
-		response.Error(w, err)
+		response.Error(w, r, err)
 		return
 	}
 

@@ -1,21 +1,25 @@
-package mysql
+package mysqlrepo
 
 import (
 	"context"
 
+	"github.com/jmoiron/sqlx"
+
 	"github.com/andrewhigh08/team-task-nexus/internal/domain"
 	"github.com/andrewhigh08/team-task-nexus/internal/pkg/apperror"
-	"github.com/jmoiron/sqlx"
 )
 
+// CommentRepo stores task comments.
 type CommentRepo struct {
 	db *sqlx.DB
 }
 
+// NewCommentRepo returns a CommentRepo on db.
 func NewCommentRepo(db *sqlx.DB) *CommentRepo {
 	return &CommentRepo{db: db}
 }
 
+// Create inserts comment and returns its id.
 func (r *CommentRepo) Create(ctx context.Context, comment *domain.TaskComment) (int64, error) {
 	q := getQuerier(ctx, r.db)
 	result, err := q.ExecContext(ctx,
@@ -28,6 +32,7 @@ func (r *CommentRepo) Create(ctx context.Context, comment *domain.TaskComment) (
 	return result.LastInsertId()
 }
 
+// ListByTaskID returns the comments of a task, oldest first.
 func (r *CommentRepo) ListByTaskID(ctx context.Context, taskID int64) ([]domain.TaskComment, error) {
 	q := getQuerier(ctx, r.db)
 	var comments []domain.TaskComment

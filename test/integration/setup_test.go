@@ -4,6 +4,7 @@ package integration
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -13,11 +14,13 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/golang-migrate/migrate/v4"
 	migratemysql "github.com/golang-migrate/migrate/v4/database/mysql"
-	_ "github.com/golang-migrate/migrate/v4/source/file"
+	"github.com/golang-migrate/migrate/v4/source/iofs"
 	"github.com/jmoiron/sqlx"
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
+
+	"github.com/andrewhigh08/team-task-nexus/migrations"
 )
 
 var (
@@ -101,12 +104,17 @@ func setupMySQL(ctx context.Context) (testcontainers.Container, *sqlx.DB, error)
 		return container, nil, fmt.Errorf("create migration driver: %w", err)
 	}
 
-	mig, err := migrate.NewWithDatabaseInstance("file://../../migrations", "mysql", driver)
+	source, err := iofs.New(migrations.FS, ".")
+	if err != nil {
+		return container, nil, fmt.Errorf("read embedded migrations: %w", err)
+	}
+
+	mig, err := migrate.NewWithInstance("iofs", source, "mysql", driver)
 	if err != nil {
 		return container, nil, fmt.Errorf("create migrate: %w", err)
 	}
 
-	if err := mig.Up(); err != nil && err != migrate.ErrNoChange {
+	if err := mig.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		return container, nil, fmt.Errorf("run migrations: %w", err)
 	}
 

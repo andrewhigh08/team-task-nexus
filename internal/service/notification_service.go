@@ -2,13 +2,14 @@ package service
 
 import (
 	"context"
-	"log"
 	"sync"
 	"time"
 
 	"github.com/andrewhigh08/team-task-nexus/internal/domain"
+	"github.com/andrewhigh08/team-task-nexus/internal/pkg/logger"
 )
 
+// NotificationServiceImpl stands in for an email sender: it logs the notifications it would send.
 type NotificationServiceImpl struct {
 	mu            sync.Mutex
 	failures      int
@@ -17,6 +18,7 @@ type NotificationServiceImpl struct {
 	resetInterval time.Duration
 }
 
+// NewNotificationService returns a NotificationServiceImpl.
 func NewNotificationService() *NotificationServiceImpl {
 	return &NotificationServiceImpl{
 		threshold:     3,
@@ -38,24 +40,26 @@ func (s *NotificationServiceImpl) isCircuitOpen() bool {
 	return false
 }
 
+// NotifyTaskAssigned logs the assignment notification for assignee.
 func (s *NotificationServiceImpl) NotifyTaskAssigned(ctx context.Context, task *domain.Task, assignee *domain.User) error {
+	log := logger.FromContext(ctx)
 	if s.isCircuitOpen() {
-		log.Printf("[NOTIFICATION] Circuit breaker open, skipping notification for task %d", task.ID)
+		log.Warn("circuit breaker open, notification skipped", "event", "task_assigned", "task_id", task.ID)
 		return nil
 	}
 
-	log.Printf("[NOTIFICATION] Mock email: Task '%s' (ID: %d) assigned to %s (%s)",
-		task.Title, task.ID, assignee.FullName, assignee.Email)
+	log.Info("notification sent", "event", "task_assigned", "task_id", task.ID, "assignee_id", assignee.ID)
 	return nil
 }
 
+// NotifyCommentAdded logs the notification about a new comment on task.
 func (s *NotificationServiceImpl) NotifyCommentAdded(ctx context.Context, comment *domain.TaskComment, task *domain.Task) error {
+	log := logger.FromContext(ctx)
 	if s.isCircuitOpen() {
-		log.Printf("[NOTIFICATION] Circuit breaker open, skipping notification for comment on task %d", task.ID)
+		log.Warn("circuit breaker open, notification skipped", "event", "comment_added", "task_id", task.ID)
 		return nil
 	}
 
-	log.Printf("[NOTIFICATION] Mock email: New comment on task '%s' (ID: %d) by user %d",
-		task.Title, task.ID, comment.UserID)
+	log.Info("notification sent", "event", "comment_added", "task_id", task.ID, "comment_id", comment.ID, "author_id", comment.UserID)
 	return nil
 }

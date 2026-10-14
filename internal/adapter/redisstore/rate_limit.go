@@ -1,4 +1,4 @@
-package redis
+package redisstore
 
 import (
 	"context"
@@ -8,11 +8,13 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// RateLimiter limits the requests of each user per minute.
 type RateLimiter struct {
 	client            *redis.Client
 	requestsPerMinute int
 }
 
+// NewRateLimiter returns a RateLimiter admitting requestsPerMinute requests per user.
 func NewRateLimiter(client *redis.Client, requestsPerMinute int) *RateLimiter {
 	return &RateLimiter{
 		client:            client,
@@ -20,6 +22,7 @@ func NewRateLimiter(client *redis.Client, requestsPerMinute int) *RateLimiter {
 	}
 }
 
+// Allow records a request of the user and reports whether it is within the limit.
 func (r *RateLimiter) Allow(ctx context.Context, userID int64) (bool, error) {
 	key := fmt.Sprintf("rate_limit:user:%d", userID)
 	now := time.Now().Unix()

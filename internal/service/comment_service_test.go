@@ -51,9 +51,7 @@ func TestCommentService_Create_EmptyContent(t *testing.T) {
 
 	assert.Nil(t, result)
 	assert.Error(t, err)
-	appErr, ok := apperror.IsAppError(err)
-	assert.True(t, ok)
-	assert.Equal(t, 400, appErr.Code)
+	assertAppError(t, err, apperror.CodeBadRequest)
 }
 
 func TestCommentService_Create_NotTeamMember(t *testing.T) {
@@ -74,7 +72,7 @@ func TestCommentService_Create_NotTeamMember(t *testing.T) {
 
 	assert.Nil(t, result)
 	assert.Error(t, err)
-	assert.Equal(t, apperror.ErrNotTeamMember, err)
+	assertAppError(t, err, apperror.CodeForbidden)
 }
 
 func TestCommentService_ListByTaskID_Success(t *testing.T) {
@@ -108,7 +106,7 @@ func TestCommentService_ListByTaskID_TaskNotFound(t *testing.T) {
 	notifSvc := new(mocks.NotificationServiceMock)
 	svc := NewCommentService(commentRepo, taskRepo, teamRepo, notifSvc)
 
-	taskRepo.On("GetByID", mock.Anything, int64(999)).Return(nil, apperror.NotFound("task not found"))
+	taskRepo.On("GetByID", mock.Anything, int64(999)).Return(nil, apperror.NotFound("task", int64(999)))
 
 	result, err := svc.ListByTaskID(context.Background(), 1, 999)
 

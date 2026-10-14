@@ -8,6 +8,11 @@ import (
 	"github.com/andrewhigh08/team-task-nexus/internal/port"
 )
 
+// retryAfterSeconds is the window of the limiter: a client that waits this long is admitted again.
+const retryAfterSeconds = 60
+
+// RateLimit rejects requests of authenticated users above the limit enforced by limiter.
+// Requests are let through when the limiter fails.
 func RateLimit(limiter port.RateLimiter) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -23,7 +28,7 @@ func RateLimit(limiter port.RateLimiter) func(http.Handler) http.Handler {
 				return
 			}
 			if !allowed {
-				response.Error(w, apperror.ErrRateLimited)
+				response.Error(w, r, apperror.TooManyRequests("rate limit exceeded", retryAfterSeconds))
 				return
 			}
 

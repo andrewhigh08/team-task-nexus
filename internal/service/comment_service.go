@@ -44,7 +44,7 @@ func (s *CommentServiceImpl) Create(ctx context.Context, userID, taskID int64, r
 		return nil, err
 	}
 	if member == nil {
-		return nil, apperror.ErrNotTeamMember
+		return nil, errNotTeamMember()
 	}
 
 	comment := &domain.TaskComment{
@@ -75,7 +75,7 @@ func (s *CommentServiceImpl) ListByTaskID(ctx context.Context, userID, taskID in
 		return nil, err
 	}
 	if member == nil {
-		return nil, apperror.ErrNotTeamMember
+		return nil, errNotTeamMember()
 	}
 
 	return s.commentRepo.ListByTaskID(ctx, taskID)

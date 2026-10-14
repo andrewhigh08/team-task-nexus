@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/andrewhigh08/team-task-nexus/internal/adapter/cache/redis"
-	mysqlrepo "github.com/andrewhigh08/team-task-nexus/internal/adapter/repository/mysql"
+	"github.com/andrewhigh08/team-task-nexus/internal/adapter/mysqlrepo"
+	"github.com/andrewhigh08/team-task-nexus/internal/adapter/redisstore"
 	"github.com/andrewhigh08/team-task-nexus/internal/domain"
 	"github.com/andrewhigh08/team-task-nexus/internal/service"
 	"github.com/stretchr/testify/assert"
@@ -25,7 +25,7 @@ func TestTeamFlow_Integration(t *testing.T) {
 	historyRepo := mysqlrepo.NewTaskHistoryRepo(testDB)
 	commentRepo := mysqlrepo.NewCommentRepo(testDB)
 	txManager := mysqlrepo.NewTransactionManager(testDB)
-	taskCache := redis.NewTaskCache(testRedis)
+	taskCache := redisstore.NewTaskCache(testRedis)
 	notifSvc := service.NewNotificationService()
 
 	authSvc := service.NewAuthService(userRepo, "test-secret", 24*time.Hour)

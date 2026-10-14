@@ -10,7 +10,7 @@ REST API сервис для управления командами и зада
 | База данных | [jmoiron/sqlx](https://github.com/jmoiron/sqlx) + MySQL 8.0 |
 | Кеш | [redis/go-redis/v9](https://github.com/redis/go-redis) |
 | JWT | [golang-jwt/jwt/v5](https://github.com/golang-jwt/jwt) |
-| Конфигурация | [spf13/viper](https://github.com/spf13/viper) |
+| Конфигурация | [ilyakaznacheev/cleanenv](https://github.com/ilyakaznacheev/cleanenv) + [joho/godotenv](https://github.com/joho/godotenv) |
 | Метрики | [prometheus/client_golang](https://github.com/prometheus/client_golang) |
 | Миграции | [golang-migrate/migrate/v4](https://github.com/golang-migrate/migrate) |
 | Тестирование | [testify](https://github.com/stretchr/testify) + [testcontainers-go](https://github.com/testcontainers/testcontainers-go) |
@@ -25,19 +25,22 @@ handler → service → repository
 ```
 
 ```
-cmd/api/main.go                     — точка входа, DI, graceful shutdown
+cmd/api/main.go                     — точка входа: конфигурация, логгер, сигналы
+migrations/                          — SQL-миграции, встроены в бинарник и применяются при старте
 internal/
-├── config/                          — конфигурация (Viper, YAML + ENV)
+├── app/                             — сборка приложения, MySQL/Redis, миграции, HTTP-сервер, graceful shutdown
+├── config/                          — конфигурация из переменных окружения (cleanenv, .env)
 ├── domain/                          — сущности, DTO, перечисления
 ├── port/                            — интерфейсы (границы архитектуры)
 ├── service/                         — бизнес-логика
 ├── pkg/apperror/                    — типизированные ошибки приложения
+├── pkg/logger/                      — slog-логгер с request_id/user_id из контекста
 └── adapter/
     ├── http/handler/                — HTTP-обработчики
     ├── http/middleware/             — JWT, rate limit, метрики, логирование
     ├── http/response/              — единый формат ответа API
-    ├── repository/mysql/           — sqlx-репозитории
-    └── cache/redis/                — кеш задач, rate limiter
+    ├── mysqlrepo/                  — sqlx-репозитории
+    └── redisstore/                 — кеш задач, rate limiter
 ```
 
 ## База данных
@@ -106,10 +109,15 @@ make docker-up
 
 ### Локально
 
-Требуется запущенный MySQL и Redis.
+Требуется запущенный MySQL и Redis. Конфигурация читается из переменных окружения
+(`SERVER_*`, `LOG_*`, `DB_*`, `REDIS_*`, `JWT_SECRET`, `JWT_TTL`, `RATE_LIMIT_API_PER_MINUTE`);
+файл `.env` в рабочем каталоге подхватывается, если есть, но не перекрывает уже заданные переменные.
+Обязателен только `JWT_SECRET` (не короче 32 байт), остальное имеет значения по умолчанию.
+Миграции применяются при старте.
 
 ```bash
-# Настроить подключения в configs/config.yaml
+export JWT_SECRET=local-development-only-jwt-secret-do-not-deploy
+export DB_PASSWORD=apppassword   # пароль пользователя app из docker-compose.yml
 make build
 make run
 ```

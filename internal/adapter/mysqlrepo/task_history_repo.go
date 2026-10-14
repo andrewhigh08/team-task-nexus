@@ -1,21 +1,25 @@
-package mysql
+package mysqlrepo
 
 import (
 	"context"
 
+	"github.com/jmoiron/sqlx"
+
 	"github.com/andrewhigh08/team-task-nexus/internal/domain"
 	"github.com/andrewhigh08/team-task-nexus/internal/pkg/apperror"
-	"github.com/jmoiron/sqlx"
 )
 
+// TaskHistoryRepo stores the change history of tasks.
 type TaskHistoryRepo struct {
 	db *sqlx.DB
 }
 
+// NewTaskHistoryRepo returns a TaskHistoryRepo on db.
 func NewTaskHistoryRepo(db *sqlx.DB) *TaskHistoryRepo {
 	return &TaskHistoryRepo{db: db}
 }
 
+// Create inserts one history entry.
 func (r *TaskHistoryRepo) Create(ctx context.Context, history *domain.TaskHistory) error {
 	q := getQuerier(ctx, r.db)
 	_, err := q.ExecContext(ctx,
@@ -29,6 +33,7 @@ func (r *TaskHistoryRepo) Create(ctx context.Context, history *domain.TaskHistor
 	return nil
 }
 
+// ListByTaskID returns the history of a task, newest first.
 func (r *TaskHistoryRepo) ListByTaskID(ctx context.Context, taskID int64) ([]domain.TaskHistory, error) {
 	q := getQuerier(ctx, r.db)
 	var history []domain.TaskHistory

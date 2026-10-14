@@ -1,14 +1,18 @@
+// Package http assembles the HTTP API: the router with its middleware and routes.
 package http
 
 import (
-	"github.com/andrewhigh08/team-task-nexus/internal/adapter/http/handler"
-	"github.com/andrewhigh08/team-task-nexus/internal/adapter/http/middleware"
-	"github.com/andrewhigh08/team-task-nexus/internal/port"
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+
+	"github.com/andrewhigh08/team-task-nexus/internal/adapter/http/handler"
+	"github.com/andrewhigh08/team-task-nexus/internal/adapter/http/middleware"
+	"github.com/andrewhigh08/team-task-nexus/internal/pkg/logger"
+	"github.com/andrewhigh08/team-task-nexus/internal/port"
 )
 
+// RouterDeps holds what the router serves requests with.
 type RouterDeps struct {
 	AuthHandler    *handler.AuthHandler
 	TeamHandler    *handler.TeamHandler
@@ -17,15 +21,17 @@ type RouterDeps struct {
 	HealthHandler  *handler.HealthHandler
 	JWTSecret      string
 	RateLimiter    port.RateLimiter
+	Logger         *logger.Logger
 }
 
+// NewRouter returns the router of the API.
 func NewRouter(deps RouterDeps) *chi.Mux {
 	r := chi.NewRouter()
 
 	r.Use(chimiddleware.Recoverer)
 	r.Use(chimiddleware.RequestID)
 	r.Use(chimiddleware.RealIP)
-	r.Use(middleware.Logging)
+	r.Use(middleware.Logging(deps.Logger))
 	r.Use(middleware.Metrics)
 
 	r.Get("/health", deps.HealthHandler.Health)

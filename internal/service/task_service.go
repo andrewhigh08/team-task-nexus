@@ -54,7 +54,7 @@ func (s *TaskServiceImpl) Create(ctx context.Context, userID int64, req domain.C
 		return nil, err
 	}
 	if member == nil {
-		return nil, apperror.ErrNotTeamMember
+		return nil, errNotTeamMember()
 	}
 
 	task := &domain.Task{
@@ -113,7 +113,7 @@ func (s *TaskServiceImpl) Update(ctx context.Context, userID, taskID int64, req 
 		return nil, err
 	}
 	if member == nil {
-		return nil, apperror.ErrNotTeamMember
+		return nil, errNotTeamMember()
 	}
 
 	err = s.txManager.WithTransaction(ctx, func(ctx context.Context) error {
@@ -183,7 +183,7 @@ func (s *TaskServiceImpl) List(ctx context.Context, userID int64, filter domain.
 			return nil, err
 		}
 		if member == nil {
-			return nil, apperror.ErrNotTeamMember
+			return nil, errNotTeamMember()
 		}
 	}
 
@@ -231,7 +231,7 @@ func (s *TaskServiceImpl) GetHistory(ctx context.Context, userID, taskID int64) 
 		return nil, err
 	}
 	if member == nil {
-		return nil, apperror.ErrNotTeamMember
+		return nil, errNotTeamMember()
 	}
 
 	return s.historyRepo.ListByTaskID(ctx, taskID)

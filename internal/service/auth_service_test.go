@@ -44,16 +44,14 @@ func TestAuthService_Register_EmptyFields(t *testing.T) {
 
 	assert.Nil(t, result)
 	assert.Error(t, err)
-	appErr, ok := apperror.IsAppError(err)
-	assert.True(t, ok)
-	assert.Equal(t, 400, appErr.Code)
+	assertAppError(t, err, apperror.CodeBadRequest)
 }
 
 func TestAuthService_Register_EmailTaken(t *testing.T) {
 	userRepo := new(mocks.UserRepositoryMock)
 	svc := NewAuthService(userRepo, "test-secret", 24*time.Hour)
 
-	userRepo.On("Create", mock.Anything, mock.AnythingOfType("*domain.User")).Return(int64(0), apperror.ErrEmailTaken)
+	userRepo.On("Create", mock.Anything, mock.AnythingOfType("*domain.User")).Return(int64(0), apperror.Conflict("user", "email", "taken@example.com"))
 
 	req := domain.RegisterRequest{
 		Email:    "taken@example.com",
@@ -65,9 +63,7 @@ func TestAuthService_Register_EmailTaken(t *testing.T) {
 
 	assert.Nil(t, result)
 	assert.Error(t, err)
-	appErr, ok := apperror.IsAppError(err)
-	assert.True(t, ok)
-	assert.Equal(t, 409, appErr.Code)
+	assertAppError(t, err, apperror.CodeConflict)
 	userRepo.AssertExpectations(t)
 }
 
@@ -127,7 +123,7 @@ func TestAuthService_Login_UserNotFound(t *testing.T) {
 	userRepo := new(mocks.UserRepositoryMock)
 	svc := NewAuthService(userRepo, "test-secret", 24*time.Hour)
 
-	userRepo.On("GetByEmail", mock.Anything, "notfound@example.com").Return(nil, apperror.NotFound("user not found"))
+	userRepo.On("GetByEmail", mock.Anything, "notfound@example.com").Return(nil, apperror.NotFound("user", "notfound@example.com"))
 
 	req := domain.LoginRequest{
 		Email:    "notfound@example.com",
@@ -150,7 +146,5 @@ func TestAuthService_Login_EmptyFields(t *testing.T) {
 
 	assert.Nil(t, result)
 	assert.Error(t, err)
-	appErr, ok := apperror.IsAppError(err)
-	assert.True(t, ok)
-	assert.Equal(t, 400, appErr.Code)
+	assertAppError(t, err, apperror.CodeBadRequest)
 }

@@ -1,24 +1,27 @@
-package mysql
+package mysqlrepo
 
 import (
 	"context"
 	"database/sql"
 	"errors"
 
+	"github.com/jmoiron/sqlx"
+
 	"github.com/andrewhigh08/team-task-nexus/internal/domain"
 	"github.com/andrewhigh08/team-task-nexus/internal/pkg/apperror"
-	"github.com/go-sql-driver/mysql"
-	"github.com/jmoiron/sqlx"
 )
 
+// TeamRepo stores teams and their members.
 type TeamRepo struct {
 	db *sqlx.DB
 }
 
+// NewTeamRepo returns a TeamRepo on db.
 func NewTeamRepo(db *sqlx.DB) *TeamRepo {
 	return &TeamRepo{db: db}
 }
 
+// Create inserts team and returns its id.
 func (r *TeamRepo) Create(ctx context.Context, team *domain.Team) (int64, error) {
 	q := getQuerier(ctx, r.db)
 	result, err := q.ExecContext(ctx,
@@ -31,19 +34,21 @@ func (r *TeamRepo) Create(ctx context.Context, team *domain.Team) (int64, error)
 	return result.LastInsertId()
 }
 
+// GetByID returns the team with the given id.
 func (r *TeamRepo) GetByID(ctx context.Context, id int64) (*domain.Team, error) {
 	q := getQuerier(ctx, r.db)
 	var team domain.Team
 	err := q.GetContext(ctx, &team, "SELECT * FROM teams WHERE id = ?", id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, apperror.NotFound("team not found")
+			return nil, apperror.NotFound("team", id)
 		}
 		return nil, apperror.Internal("get team", err)
 	}
 	return &team, nil
 }
 
+// ListByUserID returns the teams the user belongs to, newest first.
 func (r *TeamRepo) ListByUserID(ctx context.Context, userID int64) ([]domain.Team, error) {
 	q := getQuerier(ctx, r.db)
 	var teams []domain.Team
@@ -59,6 +64,7 @@ func (r *TeamRepo) ListByUserID(ctx context.Context, userID int64) ([]domain.Tea
 	return teams, nil
 }
 
+// AddMember adds member to its team.
 func (r *TeamRepo) AddMember(ctx context.Context, member *domain.TeamMember) error {
 	q := getQuerier(ctx, r.db)
 	_, err := q.ExecContext(ctx,
@@ -66,15 +72,15 @@ func (r *TeamRepo) AddMember(ctx context.Context, member *domain.TeamMember) err
 		member.TeamID, member.UserID, member.Role,
 	)
 	if err != nil {
-		var mysqlErr *mysql.MySQLError
-		if errors.As(err, &mysqlErr) && mysqlErr.Number == 1062 {
-			return apperror.New(409, "user is already a member of this team")
+		if isDuplicateEntry(err) {
+			return apperror.Conflict("team member", "user_id", member.UserID)
 		}
 		return apperror.Internal("add team member", err)
 	}
 	return nil
 }
 
+// GetMember returns the membership of a user in a team, or nil when the user is not a member.
 func (r *TeamRepo) GetMember(ctx context.Context, teamID, userID int64) (*domain.TeamMember, error) {
 	q := getQuerier(ctx, r.db)
 	var member domain.TeamMember
@@ -91,6 +97,7 @@ func (r *TeamRepo) GetMember(ctx context.Context, teamID, userID int64) (*domain
 	return &member, nil
 }
 
+// GetStats returns statistics for every team the user belongs to.
 func (r *TeamRepo) GetStats(ctx context.Context, userID int64) ([]domain.TeamStats, error) {
 	q := getQuerier(ctx, r.db)
 	var stats []domain.TeamStats
@@ -110,6 +117,7 @@ func (r *TeamRepo) GetStats(ctx context.Context, userID int64) ([]domain.TeamSta
 	return stats, nil
 }
 
+// GetTopContributors returns the three members of a team who created the most tasks in the last 30 days.
 func (r *TeamRepo) GetTopContributors(ctx context.Context, teamID int64) ([]domain.TopContributor, error) {
 	q := getQuerier(ctx, r.db)
 	var contributors []domain.TopContributor

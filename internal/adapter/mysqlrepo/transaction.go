@@ -1,4 +1,5 @@
-package mysql
+// Package mysqlrepo implements the repository ports on MySQL with sqlx.
+package mysqlrepo
 
 import (
 	"context"
@@ -12,14 +13,18 @@ type ctxKey string
 
 const txKey ctxKey = "tx"
 
+// TransactionManager runs functions inside a database transaction carried by the context.
 type TransactionManager struct {
 	db *sqlx.DB
 }
 
+// NewTransactionManager returns a TransactionManager on db.
 func NewTransactionManager(db *sqlx.DB) *TransactionManager {
 	return &TransactionManager{db: db}
 }
 
+// WithTransaction runs fn in a new transaction that repositories pick up from the context passed
+// to fn; it commits when fn returns nil and rolls back otherwise.
 func (m *TransactionManager) WithTransaction(ctx context.Context, fn func(ctx context.Context) error) error {
 	tx, err := m.db.BeginTxx(ctx, &sql.TxOptions{})
 	if err != nil {

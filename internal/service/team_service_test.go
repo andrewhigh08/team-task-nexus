@@ -45,9 +45,7 @@ func TestTeamService_Create_EmptyName(t *testing.T) {
 
 	assert.Nil(t, result)
 	assert.Error(t, err)
-	appErr, ok := apperror.IsAppError(err)
-	assert.True(t, ok)
-	assert.Equal(t, 400, appErr.Code)
+	assertAppError(t, err, apperror.CodeBadRequest)
 }
 
 func TestTeamService_GetByID_Success(t *testing.T) {
@@ -78,7 +76,7 @@ func TestTeamService_GetByID_NotMember(t *testing.T) {
 
 	assert.Nil(t, result)
 	assert.Error(t, err)
-	assert.Equal(t, apperror.ErrNotTeamMember, err)
+	assertAppError(t, err, apperror.CodeForbidden)
 }
 
 func TestTeamService_InviteUser_Success(t *testing.T) {
@@ -116,7 +114,7 @@ func TestTeamService_InviteUser_InsufficientRole(t *testing.T) {
 	})
 
 	assert.Error(t, err)
-	assert.Equal(t, apperror.ErrInsufficientRole, err)
+	assertAppError(t, err, apperror.CodeForbidden)
 }
 
 func TestTeamService_ListByUserID(t *testing.T) {
@@ -158,9 +156,7 @@ func TestTeamService_InviteUser_EmptyEmail(t *testing.T) {
 	err := svc.InviteUser(context.Background(), 1, 1, domain.InviteRequest{Email: ""})
 
 	assert.Error(t, err)
-	appErr, ok := apperror.IsAppError(err)
-	assert.True(t, ok)
-	assert.Equal(t, 400, appErr.Code)
+	assertAppError(t, err, apperror.CodeBadRequest)
 }
 
 func TestTeamService_InviteUser_NotMember(t *testing.T) {
@@ -172,7 +168,7 @@ func TestTeamService_InviteUser_NotMember(t *testing.T) {
 	err := svc.InviteUser(context.Background(), 99, 1, domain.InviteRequest{Email: "user@example.com"})
 
 	assert.Error(t, err)
-	assert.Equal(t, apperror.ErrNotTeamMember, err)
+	assertAppError(t, err, apperror.CodeForbidden)
 }
 
 func TestTeamService_InviteUser_AsAdmin(t *testing.T) {
@@ -224,7 +220,7 @@ func TestTeamService_GetTopContributors_NotMember(t *testing.T) {
 
 	assert.Nil(t, result)
 	assert.Error(t, err)
-	assert.Equal(t, apperror.ErrNotTeamMember, err)
+	assertAppError(t, err, apperror.CodeForbidden)
 }
 
 func TestTeamService_InviteUser_UserNotFound(t *testing.T) {
@@ -234,7 +230,7 @@ func TestTeamService_InviteUser_UserNotFound(t *testing.T) {
 	teamRepo.On("GetMember", mock.Anything, int64(1), int64(1)).Return(&domain.TeamMember{
 		TeamID: 1, UserID: 1, Role: domain.TeamRoleOwner,
 	}, nil)
-	userRepo.On("GetByEmail", mock.Anything, "unknown@example.com").Return(nil, apperror.NotFound("user not found"))
+	userRepo.On("GetByEmail", mock.Anything, "unknown@example.com").Return(nil, apperror.NotFound("user", "unknown@example.com"))
 
 	err := svc.InviteUser(context.Background(), 1, 1, domain.InviteRequest{
 		Email: "unknown@example.com",

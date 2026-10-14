@@ -81,7 +81,7 @@ func TestTaskService_Create_NotTeamMember(t *testing.T) {
 
 	assert.Nil(t, result)
 	assert.Error(t, err)
-	assert.Equal(t, apperror.ErrNotTeamMember, err)
+	assertAppError(t, err, apperror.CodeForbidden)
 }
 
 func TestTaskService_Create_WithAssignee(t *testing.T) {
@@ -228,7 +228,7 @@ func TestTaskService_GetHistory_NotMember(t *testing.T) {
 
 	assert.Nil(t, result)
 	assert.Error(t, err)
-	assert.Equal(t, apperror.ErrNotTeamMember, err)
+	assertAppError(t, err, apperror.CodeForbidden)
 }
 
 func TestTaskService_Update_AllFields(t *testing.T) {
@@ -294,14 +294,14 @@ func TestTaskService_Update_NotMember(t *testing.T) {
 
 	assert.Nil(t, result)
 	assert.Error(t, err)
-	assert.Equal(t, apperror.ErrNotTeamMember, err)
+	assertAppError(t, err, apperror.CodeForbidden)
 }
 
 func TestTaskService_Update_TaskNotFound(t *testing.T) {
 	taskRepo, teamRepo, userRepo, historyRepo, cache, txManager, notifSvc := newTaskServiceDeps()
 	svc := NewTaskService(taskRepo, teamRepo, userRepo, historyRepo, cache, txManager, notifSvc)
 
-	taskRepo.On("GetByID", mock.Anything, int64(999)).Return(nil, apperror.NotFound("task not found"))
+	taskRepo.On("GetByID", mock.Anything, int64(999)).Return(nil, apperror.NotFound("task", int64(999)))
 
 	newTitle := "X"
 	result, err := svc.Update(context.Background(), 1, 999, domain.UpdateTaskRequest{

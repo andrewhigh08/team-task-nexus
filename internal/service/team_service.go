@@ -71,7 +71,7 @@ func (s *TeamServiceImpl) GetByID(ctx context.Context, userID, teamID int64) (*d
 		return nil, err
 	}
 	if member == nil {
-		return nil, apperror.ErrNotTeamMember
+		return nil, errNotTeamMember()
 	}
 	return s.teamRepo.GetByID(ctx, teamID)
 }
@@ -90,15 +90,15 @@ func (s *TeamServiceImpl) InviteUser(ctx context.Context, inviterID, teamID int6
 		return err
 	}
 	if member == nil {
-		return apperror.ErrNotTeamMember
+		return errNotTeamMember()
 	}
 	if member.Role != domain.TeamRoleOwner && member.Role != domain.TeamRoleAdmin {
-		return apperror.ErrInsufficientRole
+		return apperror.Forbidden("insufficient role for this action")
 	}
 
 	invitee, err := s.userRepo.GetByEmail(ctx, req.Email)
 	if err != nil {
-		return apperror.NotFound("user with this email not found")
+		return apperror.NotFound("user", req.Email)
 	}
 
 	role := domain.TeamRoleMember
@@ -123,7 +123,7 @@ func (s *TeamServiceImpl) GetTopContributors(ctx context.Context, userID, teamID
 		return nil, err
 	}
 	if member == nil {
-		return nil, apperror.ErrNotTeamMember
+		return nil, errNotTeamMember()
 	}
 	return s.teamRepo.GetTopContributors(ctx, teamID)
 }
