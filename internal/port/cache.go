@@ -15,9 +15,3 @@ type TaskCache interface {
 	// InvalidateTeam drops every cached page of the team's tasks.
 	InvalidateTeam(ctx context.Context, teamID int64) error
 }
-
-// RateLimiter limits the request rate of each user.
-type RateLimiter interface {
-	// Allow records a request of userID and reports whether it is within the limit.
-	Allow(ctx context.Context, userID int64) (bool, error)
-}

@@ -12,12 +12,10 @@ import (
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/mock/gomock"
 
 	"github.com/andrewhigh08/team-task-nexus/internal/adapter/http/middleware"
 	"github.com/andrewhigh08/team-task-nexus/internal/adapter/http/response"
 	"github.com/andrewhigh08/team-task-nexus/internal/pkg/logger"
-	"github.com/andrewhigh08/team-task-nexus/test/mocks"
 )
 
 func logRecords(t *testing.T, buf *bytes.Buffer) []map[string]any {
@@ -77,48 +75,6 @@ func TestLogging(t *testing.T) {
 			assert.Equal(t, "/api/v1/tasks", access["path"])
 			assert.InDelta(t, tt.wantStatus, access["status"], 0)
 			assert.Contains(t, access, "duration_ms")
-		})
-	}
-}
-
-func TestRateLimit(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name       string
-		userID     int64
-		allowed    bool
-		limiterErr error
-		wantStatus int
-		wantBody   string
-	}{
-		{name: "anonymous requests are not limited", wantStatus: http.StatusNoContent},
-		{name: "allowed", userID: 7, allowed: true, wantStatus: http.StatusNoContent},
-		{
-			name: "denied", userID: 7, allowed: false, wantStatus: http.StatusTooManyRequests,
-			wantBody: `{"success":false,"error":{"code":"TOO_MANY_REQUESTS","message":"rate limit exceeded","details":{"retry_after_seconds":60}}}`,
-		},
-		{name: "limiter failure lets the request through", userID: 7, limiterErr: errors.New("redis down"), wantStatus: http.StatusNoContent},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			limiter := mocks.NewMockRateLimiter(gomock.NewController(t))
-			next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
-			ctx := t.Context()
-			if tt.userID != 0 {
-				ctx = middleware.WithUserID(ctx, tt.userID)
-				limiter.EXPECT().Allow(gomock.Any(), tt.userID).Return(tt.allowed, tt.limiterErr)
-			}
-			req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/api/v1/tasks", http.NoBody)
-			rec := httptest.NewRecorder()
-
-			middleware.RateLimit(limiter)(next).ServeHTTP(rec, req)
-
-			assert.Equal(t, tt.wantStatus, rec.Code)
-			if tt.wantBody != "" {
-				assert.JSONEq(t, tt.wantBody, rec.Body.String())
-			}
 		})
 	}
 }

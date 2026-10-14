@@ -17,7 +17,6 @@ func (a *App) newRouter() (http.Handler, error) {
 	teamRepo := mysqlrepo.NewTeamRepo(a.db)
 	taskRepo := mysqlrepo.NewTaskRepo(a.db)
 	txManager := mysqlrepo.NewTxManager(a.db)
-	rateLimiter := redisstore.NewRateLimiter(a.rdb, a.cfg.RateLimit.APIPerMinute)
 	notifier := service.NewNotificationService()
 
 	authSvc, err := service.NewAuthService(userRepo, service.AuthConfig{
@@ -62,7 +61,11 @@ func (a *App) newRouter() (http.Handler, error) {
 		CommentHandler: handler.NewCommentHandler(commentSvc),
 		HealthHandler:  handler.NewHealthHandler(),
 		TokenVerifier:  authSvc,
-		RateLimiter:    rateLimiter,
+		RateLimiter:    redisstore.NewRateLimiter(a.rdb),
 		Logger:         a.base.WithComponent("http"),
+
+		APIRateLimit:      a.cfg.RateLimit.APIPerMinute,
+		AuthRateLimit:     a.cfg.RateLimit.AuthPerMinute,
+		TrustProxyHeaders: a.cfg.Server.TrustProxyHeaders,
 	}), nil
 }

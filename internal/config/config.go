@@ -48,7 +48,9 @@ type Config struct {
 	RateLimit RateLimitConfig
 }
 
-// ServerConfig configures the HTTP listener.
+// ServerConfig configures the HTTP listener. TrustProxyHeaders takes client addresses from
+// X-Forwarded-For and X-Real-IP instead of the connection; enable it only behind a proxy that
+// overwrites those headers, or every client can choose the address it is limited under.
 type ServerConfig struct {
 	Port              int           `env:"SERVER_PORT" env-default:"8080"`
 	ReadHeaderTimeout time.Duration `env:"SERVER_READ_HEADER_TIMEOUT" env-default:"5s"`
@@ -56,6 +58,7 @@ type ServerConfig struct {
 	WriteTimeout      time.Duration `env:"SERVER_WRITE_TIMEOUT" env-default:"15s"`
 	IdleTimeout       time.Duration `env:"SERVER_IDLE_TIMEOUT" env-default:"60s"`
 	ShutdownTimeout   time.Duration `env:"SERVER_SHUTDOWN_TIMEOUT" env-default:"10s"`
+	TrustProxyHeaders bool          `env:"TRUST_PROXY_HEADERS" env-default:"false"`
 }
 
 // LogConfig configures the logger.
@@ -98,9 +101,11 @@ type PasswordConfig struct {
 	BcryptCost int `env:"BCRYPT_COST" env-default:"10"`
 }
 
-// RateLimitConfig configures the request rate limits.
+// RateLimitConfig configures the request rate limits: APIPerMinute per authenticated user,
+// AuthPerMinute per client address on registration and login.
 type RateLimitConfig struct {
-	APIPerMinute int `env:"RATE_LIMIT_API_PER_MINUTE" env-default:"100"`
+	APIPerMinute  int `env:"RATE_LIMIT_API_PER_MINUTE" env-default:"100"`
+	AuthPerMinute int `env:"RATE_LIMIT_AUTH_PER_MINUTE" env-default:"10"`
 }
 
 // Load reads the configuration from a .env file (when present) and the environment, then validates it.
@@ -205,10 +210,10 @@ func (c PasswordConfig) validate() []error {
 }
 
 func (c RateLimitConfig) validate() []error {
-	if c.APIPerMinute < 1 {
-		return []error{fmt.Errorf("RATE_LIMIT_API_PER_MINUTE must be greater than zero, got %d", c.APIPerMinute)}
+	return []error{
+		positive("RATE_LIMIT_API_PER_MINUTE", c.APIPerMinute),
+		positive("RATE_LIMIT_AUTH_PER_MINUTE", c.AuthPerMinute),
 	}
-	return nil
 }
 
 func validPort(name string, port int) error {
@@ -218,9 +223,9 @@ func validPort(name string, port int) error {
 	return nil
 }
 
-func positive(name string, d time.Duration) error {
-	if d <= 0 {
-		return fmt.Errorf("%s must be greater than zero, got %s", name, d)
+func positive[T int | time.Duration](name string, v T) error {
+	if v <= 0 {
+		return fmt.Errorf("%s must be greater than zero, got %v", name, v)
 	}
 	return nil
 }

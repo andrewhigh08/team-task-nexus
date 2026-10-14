@@ -22,6 +22,14 @@ type RouterDeps struct {
 	TokenVerifier  port.TokenVerifier
 	RateLimiter    port.RateLimiter
 	Logger         *logger.Logger
+
+	// APIRateLimit is the number of requests per minute admitted for each authenticated user.
+	APIRateLimit int
+	// AuthRateLimit is the number of registration and login requests per minute admitted for
+	// each client address.
+	AuthRateLimit int
+	// TrustProxyHeaders takes client addresses from X-Forwarded-For and X-Real-IP.
+	TrustProxyHeaders bool
 }
 
 // NewRouter returns the router of the API.
@@ -30,7 +38,6 @@ func NewRouter(deps RouterDeps) *chi.Mux {
 
 	r.Use(chimiddleware.Recoverer)
 	r.Use(chimiddleware.RequestID)
-	r.Use(chimiddleware.RealIP)
 	r.Use(middleware.Logging(deps.Logger))
 	r.Use(middleware.Metrics)
 
@@ -38,12 +45,15 @@ func NewRouter(deps RouterDeps) *chi.Mux {
 	r.Handle("/metrics", promhttp.Handler())
 
 	r.Route("/api/v1", func(r chi.Router) {
-		r.Post("/register", deps.AuthHandler.Register)
-		r.Post("/login", deps.AuthHandler.Login)
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RateLimitByIP(deps.RateLimiter, deps.AuthRateLimit, deps.TrustProxyHeaders))
+			r.Post("/register", deps.AuthHandler.Register)
+			r.Post("/login", deps.AuthHandler.Login)
+		})
 
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.Authenticate(deps.TokenVerifier))
-			r.Use(middleware.RateLimit(deps.RateLimiter))
+			r.Use(middleware.RateLimitByUser(deps.RateLimiter, deps.APIRateLimit))
 
 			r.Route("/teams", func(r chi.Router) {
 				r.Post("/", deps.TeamHandler.Create)
