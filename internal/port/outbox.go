@@ -13,10 +13,10 @@ import (
 type OutboxRepository interface {
 	// Add stores events; it must run inside TxManager.WithinTx.
 	Add(ctx context.Context, events ...domain.NewEvent) error
-	// Claim leases up to limit due events, oldest first, and counts a delivery attempt for
-	// each. A leased event is not handed out again until lease has passed, so concurrent
-	// dispatchers never claim the same event, while the events of a dispatcher that stopped
-	// mid-delivery become due again.
+	// Claim leases up to limit due events, in the order they became due, and counts a
+	// delivery attempt for each. A leased event is not handed out again until lease has
+	// passed, so concurrent dispatchers never claim the same event, while the events of a
+	// dispatcher that stopped mid-delivery become due again.
 	Claim(ctx context.Context, limit int, lease time.Duration) ([]domain.OutboxEvent, error)
 	// Release hands back claimed events that were not delivered: it takes back the attempt
 	// Claim counted for them and makes them due at once.

@@ -74,6 +74,14 @@ func (r *OutboxRepo) Add(ctx context.Context, events ...domain.NewEvent) error {
 // them, and the lease, written before the commit, keeps those rows from being claimed again
 // once the locks are gone.
 //
+// Events are claimed in the order they became due, which is the order of idx_outbox_pending:
+// next_attempt_at, then the id every secondary index ends in. The scan therefore stops after
+// limit rows. A locking read keeps a lock on every row it reads that matches the condition,
+// so in any other order MySQL would read, sort and lock the whole due backlog to return one
+// batch, and another dispatcher would find nothing to claim until the commit. FORCE INDEX
+// keeps that plan when most rows of the table are due, where the optimizer would otherwise
+// choose a full scan and a sort.
+//
 // The transaction runs at READ COMMITTED. At REPEATABLE READ the locking scan would lock the
 // gaps of the index it reads as well, and every INSERT into the outbox would wait for the
 // claim to commit, in request transactions that hold the row lock of a task meanwhile.
@@ -84,9 +92,9 @@ func (r *OutboxRepo) Claim(ctx context.Context, limit int, lease time.Duration) 
 		q := getQuerier(ctx, r.db)
 		err := q.SelectContext(ctx, &rows, `
 			SELECT id, event_type, payload, attempts, created_at
-			FROM outbox
+			FROM outbox FORCE INDEX (idx_outbox_pending)
 			WHERE sent_at IS NULL AND failed_at IS NULL AND next_attempt_at <= UTC_TIMESTAMP(3)
-			ORDER BY id
+			ORDER BY next_attempt_at, id
 			LIMIT ?
 			FOR UPDATE SKIP LOCKED`, limit,
 		)

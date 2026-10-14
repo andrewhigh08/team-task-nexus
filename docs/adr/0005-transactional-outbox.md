@@ -24,9 +24,9 @@ receiver delays the client.
 
   ```sql
   SELECT id, event_type, payload, attempts, created_at
-  FROM outbox
+  FROM outbox FORCE INDEX (idx_outbox_pending)
   WHERE sent_at IS NULL AND failed_at IS NULL AND next_attempt_at <= UTC_TIMESTAMP(3)
-  ORDER BY id
+  ORDER BY next_attempt_at, id
   LIMIT ?
   FOR UPDATE SKIP LOCKED
   ```
@@ -37,6 +37,13 @@ receiver delays the client.
   claimed again once the locks are released. The lease and the `sent_at` and `failed_at` times come
   from the database clock, which every replica shares; the time of a retry is computed by the
   dispatcher.
+- Events are claimed in the order they became due, which is the order of the index
+  `idx_outbox_pending (sent_at, failed_at, next_attempt_at)` and the `id` it implicitly ends in, so
+  the scan stops after the batch. A locking read keeps a lock on every row it reads that matches the
+  condition: ordered by `id`, the claim would read, sort and lock the whole due backlog to return one
+  batch, and a second dispatcher would find nothing to claim until the first committed.
+  `FORCE INDEX` keeps the index scan when most rows of the table are due, where the optimizer would
+  otherwise choose a full scan and a sort.
 - Delivery happens outside any transaction, one event at a time, each bounded by
   `NOTIFY_WEBHOOK_TIMEOUT`. A delivery starts only while the lease of its batch outlasts it, which is
   why the configuration requires `OUTBOX_LEASE` to exceed the timeout. When the lease runs short or

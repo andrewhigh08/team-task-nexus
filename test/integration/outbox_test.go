@@ -195,6 +195,20 @@ func TestOutboxClaimSkipsEventsLockedByAnotherClaim(t *testing.T) {
 	assert.Equal(t, ids[2:], eventIDs(events))
 }
 
+func TestOutboxClaimsEventsInTheOrderTheyBecameDue(t *testing.T) {
+	t.Parallel()
+	db := openDB(t, migratedDatabase(t))
+	outbox := mysqlrepo.NewOutboxRepo(db)
+	ids := addEvents(t, db, 3)
+	// The last event is made due an hour before the others, as a retry that came due before
+	// they were written would be. The other two became due at the same time; the id decides.
+	require.NoError(t, outbox.MarkRetry(t.Context(), ids[2], "webhook answered 503", time.Now().Add(-time.Hour)))
+
+	events, err := outbox.Claim(t.Context(), 10, time.Minute)
+	require.NoError(t, err)
+	assert.Equal(t, []int64{ids[2], ids[0], ids[1]}, eventIDs(events))
+}
+
 func TestOutboxLeaseExpiryMakesAnEventDueAgain(t *testing.T) {
 	t.Parallel()
 	db := openDB(t, migratedDatabase(t))

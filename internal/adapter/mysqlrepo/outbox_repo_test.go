@@ -18,8 +18,10 @@ import (
 	"github.com/andrewhigh08/team-task-nexus/internal/pkg/apperror"
 )
 
-const claimQuery = "SELECT id, event_type, payload, attempts, created_at FROM outbox " +
-	"WHERE sent_at IS NULL AND failed_at IS NULL AND next_attempt_at <= UTC_TIMESTAMP(3) ORDER BY id LIMIT ? FOR UPDATE SKIP LOCKED"
+const claimQuery = "SELECT id, event_type, payload, attempts, created_at " +
+	"FROM outbox FORCE INDEX (idx_outbox_pending) " +
+	"WHERE sent_at IS NULL AND failed_at IS NULL AND next_attempt_at <= UTC_TIMESTAMP(3) " +
+	"ORDER BY next_attempt_at, id LIMIT ? FOR UPDATE SKIP LOCKED"
 
 // sqlPattern matches query whatever the whitespace of the statement.
 func sqlPattern(query string) string {
