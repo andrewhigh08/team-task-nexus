@@ -20,7 +20,6 @@ const (
 	CodeUnsupportedMediaType = "UNSUPPORTED_MEDIA_TYPE"
 	CodePayloadTooLarge      = "PAYLOAD_TOO_LARGE"
 	CodeTooManyRequests      = "TOO_MANY_REQUESTS"
-	CodeServiceUnavailable   = "SERVICE_UNAVAILABLE"
 	CodeInternal             = "INTERNAL_ERROR"
 )
 
@@ -146,15 +145,6 @@ func TooManyRequests(message string, retryAfter int) *AppError {
 		Details: map[string]any{
 			"retry_after_seconds": retryAfter,
 		},
-	}
-}
-
-// ServiceUnavailable reports that a dependency the request needs is down.
-func ServiceUnavailable(message string) *AppError {
-	return &AppError{
-		Code:       CodeServiceUnavailable,
-		Message:    message,
-		HTTPStatus: http.StatusServiceUnavailable,
 	}
 }
 

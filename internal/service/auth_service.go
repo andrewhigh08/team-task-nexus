@@ -118,7 +118,7 @@ func (s *AuthService) Register(ctx context.Context, in port.RegisterInput) (*por
 	// The row is read back for the timestamps the database assigned.
 	user, err := s.users.GetByID(ctx, id)
 	if err != nil {
-		return nil, apperror.Internal("load registered user", err)
+		return nil, err
 	}
 	return s.authResult(user)
 }
@@ -138,7 +138,7 @@ func (s *AuthService) Login(ctx context.Context, in port.LoginInput) (*port.Auth
 		return nil, errInvalidCredentials()
 	}
 	if err != nil {
-		return nil, apperror.Internal("load user by email", err)
+		return nil, err
 	}
 
 	err = s.compare([]byte(user.PasswordHash), []byte(in.Password))

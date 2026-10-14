@@ -127,9 +127,9 @@ func TestError(t *testing.T) {
 			want: `{"success":false,"error":{"code":"INTERNAL_ERROR","message":"internal server error"}}`,
 		},
 		{
-			name: "other server errors keep their message", err: apperror.ServiceUnavailable("redis is down"),
-			status: http.StatusServiceUnavailable, logged: true,
-			want: `{"success":false,"error":{"code":"SERVICE_UNAVAILABLE","message":"redis is down"}}`,
+			name: "other server errors keep their message", err: &apperror.AppError{Code: "BAD_GATEWAY", Message: "upstream is down", HTTPStatus: http.StatusBadGateway},
+			status: http.StatusBadGateway, logged: true,
+			want: `{"success":false,"error":{"code":"BAD_GATEWAY","message":"upstream is down"}}`,
 		},
 		{
 			name: "status outside the error range becomes 500", err: &apperror.AppError{Code: "CUSTOM", Message: "odd", HTTPStatus: http.StatusOK},

@@ -342,31 +342,31 @@ func TestAuthService_Register_ReportsRepositoryFailures(t *testing.T) {
 	t.Parallel()
 	errDB := errors.New("connection reset")
 	tests := []struct {
-		name     string
-		setup    func(users *mocks.MockUserRepository)
-		wantCode string
+		name    string
+		repoErr *apperror.AppError
+		setup   func(users *mocks.MockUserRepository, repoErr error)
 	}{
 		{
-			name: "email already registered",
-			setup: func(users *mocks.MockUserRepository) {
-				users.EXPECT().Create(gomock.Any(), gomock.Any()).Return(int64(0), apperror.Conflict("user", "email", testEmail))
+			name:    "email already registered",
+			repoErr: apperror.Conflict("user", "email", testEmail),
+			setup: func(users *mocks.MockUserRepository, repoErr error) {
+				users.EXPECT().Create(gomock.Any(), gomock.Any()).Return(int64(0), repoErr)
 			},
-			wantCode: apperror.CodeConflict,
 		},
 		{
-			name: "insert fails",
-			setup: func(users *mocks.MockUserRepository) {
-				users.EXPECT().Create(gomock.Any(), gomock.Any()).Return(int64(0), apperror.Internal("create user", errDB))
+			name:    "insert fails",
+			repoErr: apperror.Internal("create user", errDB),
+			setup: func(users *mocks.MockUserRepository, repoErr error) {
+				users.EXPECT().Create(gomock.Any(), gomock.Any()).Return(int64(0), repoErr)
 			},
-			wantCode: apperror.CodeInternal,
 		},
 		{
-			name: "reading the new user back fails",
-			setup: func(users *mocks.MockUserRepository) {
+			name:    "reading the new user back fails",
+			repoErr: apperror.Internal("get user by id", errDB),
+			setup: func(users *mocks.MockUserRepository, repoErr error) {
 				users.EXPECT().Create(gomock.Any(), gomock.Any()).Return(testUserID, nil)
-				users.EXPECT().GetByID(gomock.Any(), testUserID).Return(nil, errDB)
+				users.EXPECT().GetByID(gomock.Any(), testUserID).Return(nil, repoErr)
 			},
-			wantCode: apperror.CodeInternal,
 		},
 	}
 
@@ -374,15 +374,12 @@ func TestAuthService_Register_ReportsRepositoryFailures(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			f := newAuthFixture(t)
-			tt.setup(f.users)
+			tt.setup(f.users, tt.repoErr)
 
 			res, err := f.svc.Register(t.Context(), port.RegisterInput{Email: testEmail, Password: testPassword, FullName: testFullName})
 
 			assert.Nil(t, res)
-			assertAppError(t, err, tt.wantCode)
-			if tt.wantCode == apperror.CodeInternal {
-				require.ErrorIs(t, err, errDB, "the cause is kept for the log")
-			}
+			assert.Same(t, tt.repoErr, err, "repository errors are already application errors and pass through unchanged")
 		})
 	}
 }
@@ -479,10 +476,12 @@ func TestAuthService_Login_DoesNotMaskServerFailuresAsBadCredentials(t *testing.
 		name    string
 		user    func(t *testing.T) *domain.User
 		repoErr error
-		wantErr error
+		// wantMessage is the operation the error names: the repository's own for its failures,
+		// which pass through unchanged.
+		wantMessage string
+		wantErr     error
 	}{
-		{name: "repository failure", repoErr: apperror.Internal("get user by email", errDB), wantErr: errDB},
-		{name: "unexpected repository error", repoErr: errDB, wantErr: errDB},
+		{name: "repository failure", repoErr: apperror.Internal("get user by email", errDB), wantMessage: "get user by email", wantErr: errDB},
 		{
 			name: "corrupt stored hash",
 			user: func(t *testing.T) *domain.User {
@@ -490,7 +489,8 @@ func TestAuthService_Login_DoesNotMaskServerFailuresAsBadCredentials(t *testing.
 				u.PasswordHash = "not a bcrypt hash"
 				return u
 			},
-			wantErr: bcrypt.ErrHashTooShort,
+			wantMessage: "compare password hash",
+			wantErr:     bcrypt.ErrHashTooShort,
 		},
 	}
 
@@ -507,7 +507,8 @@ func TestAuthService_Login_DoesNotMaskServerFailuresAsBadCredentials(t *testing.
 			res, err := f.svc.Login(t.Context(), port.LoginInput{Email: testEmail, Password: testPassword})
 
 			assert.Nil(t, res)
-			assertAppError(t, err, apperror.CodeInternal)
+			appErr := assertAppError(t, err, apperror.CodeInternal)
+			assert.Equal(t, tt.wantMessage, appErr.Message)
 			require.ErrorIs(t, err, tt.wantErr)
 		})
 	}

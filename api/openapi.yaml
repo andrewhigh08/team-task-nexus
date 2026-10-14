@@ -1048,7 +1048,6 @@ components:
         - UNSUPPORTED_MEDIA_TYPE
         - PAYLOAD_TOO_LARGE
         - TOO_MANY_REQUESTS
-        - SERVICE_UNAVAILABLE
         - INTERNAL_ERROR
 
     Error:

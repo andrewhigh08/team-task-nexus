@@ -87,10 +87,6 @@ func TestConstructors(t *testing.T) {
 			name: "TooManyRequests", err: TooManyRequests("rate limit exceeded", 60), code: CodeTooManyRequests,
 			message: "rate limit exceeded", status: http.StatusTooManyRequests, details: map[string]any{"retry_after_seconds": 60},
 		},
-		{
-			name: "ServiceUnavailable", err: ServiceUnavailable("redis is down"), code: CodeServiceUnavailable,
-			message: "redis is down", status: http.StatusServiceUnavailable,
-		},
 		{name: "Internal", err: Internal("list tasks", nil), code: CodeInternal, message: "list tasks", status: http.StatusInternalServerError},
 	}
 
