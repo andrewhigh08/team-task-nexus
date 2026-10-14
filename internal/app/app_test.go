@@ -7,9 +7,11 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -18,7 +20,9 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/andrewhigh08/team-task-nexus/internal/config"
+	"github.com/andrewhigh08/team-task-nexus/internal/domain"
 	"github.com/andrewhigh08/team-task-nexus/internal/pkg/logger"
+	"github.com/andrewhigh08/team-task-nexus/internal/service"
 )
 
 // syncBuffer collects log output written from several goroutines.
@@ -79,6 +83,8 @@ func testConfig(t *testing.T, connectTimeout time.Duration) *config.Config {
 		Password:  config.PasswordConfig{BcryptCost: bcrypt.MinCost},
 		RateLimit: config.RateLimitConfig{APIPerMinute: 100, AuthPerMinute: 10},
 		Cache:     config.CacheConfig{TaskListTTL: time.Minute},
+		Outbox:    config.OutboxConfig{PollInterval: time.Second, BatchSize: 10, MaxAttempts: 3, Lease: 30 * time.Second},
+		Notify:    config.NotifyConfig{WebhookTimeout: 5 * time.Second},
 	}
 	require.NoError(t, cfg.Validate())
 	return cfg
@@ -197,15 +203,40 @@ func TestWaitFor(t *testing.T) {
 	}
 }
 
-// newServedApp returns an App serving handler on a free loopback port, without databases.
-func newServedApp(t *testing.T, handler http.Handler) (*App, string) {
+// fakeWorker runs until its context is canceled, calls onStop if set, and returns err.
+type fakeWorker struct {
+	err     error
+	onStop  func()
+	started chan struct{}
+	stopped chan struct{}
+}
+
+func newFakeWorker(err error) *fakeWorker {
+	return &fakeWorker{err: err, started: make(chan struct{}), stopped: make(chan struct{})}
+}
+
+func (w *fakeWorker) Run(ctx context.Context) error {
+	close(w.started)
+	<-ctx.Done()
+	if w.onStop != nil {
+		w.onStop()
+	}
+	close(w.stopped)
+	return w.err
+}
+
+// newServedApp returns an App serving handler on a free loopback port, with a fake worker and
+// without databases.
+func newServedApp(t *testing.T, handler http.Handler, workerErr error) (*App, string, *fakeWorker) {
 	t.Helper()
 	var logs syncBuffer
 	log := newTestLogger(&logs)
 	a := &App{cfg: testConfig(t, time.Second), base: log, log: log, router: handler}
 	a.srv = a.newServer()
 	a.srv.Addr = net.JoinHostPort("127.0.0.1", strconv.Itoa(a.cfg.Server.Port))
-	return a, "http://" + a.srv.Addr
+	worker := newFakeWorker(workerErr)
+	a.dispatcher = worker
+	return a, "http://" + a.srv.Addr, worker
 }
 
 func TestNewServer_UsesTheConfiguredTimeouts(t *testing.T) {
@@ -231,9 +262,9 @@ func TestNewServer_UsesTheConfiguredTimeouts(t *testing.T) {
 
 func TestRun_ServesUntilTheContextIsCanceled(t *testing.T) {
 	t.Parallel()
-	a, baseURL := newServedApp(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	a, baseURL, worker := newServedApp(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusTeapot)
-	}))
+	}), nil)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	done := make(chan error, 1)
@@ -250,6 +281,7 @@ func TestRun_ServesUntilTheContextIsCanceled(t *testing.T) {
 		return resp.StatusCode == http.StatusTeapot
 	}, 5*time.Second, 20*time.Millisecond, "the server answers while running")
 
+	<-worker.started
 	cancel()
 	select {
 	case err := <-done:
@@ -257,12 +289,78 @@ func TestRun_ServesUntilTheContextIsCanceled(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("Run did not return after the context was canceled")
 	}
+	assert.True(t, isClosed(worker.stopped), "Run waits for the workers")
 	require.NoError(t, a.Close(), "Run has already released the resources; Close stays safe")
+}
+
+// TestRun_StopsTheWorkersAfterTheServer shuts the app down while a request is in flight. The
+// workers must keep running until the server has finished it, so the events the request
+// commits can still be delivered.
+func TestRun_StopsTheWorkersAfterTheServer(t *testing.T) {
+	t.Parallel()
+	entered, release := make(chan struct{}), make(chan struct{})
+	var answered atomic.Bool
+	a, baseURL, worker := newServedApp(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		close(entered)
+		<-release
+		answered.Store(true)
+		w.WriteHeader(http.StatusNoContent)
+	}), nil)
+	var answeredBeforeStop bool
+	worker.onStop = func() { answeredBeforeStop = answered.Load() }
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- a.Run(ctx) }()
+	<-worker.started
+	go func() {
+		// Retried until the server listens; only the first request reaches the handler.
+		for {
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, baseURL, http.NoBody)
+			if !assert.NoError(t, err) {
+				return
+			}
+			if resp, err := http.DefaultClient.Do(req); err == nil {
+				_ = resp.Body.Close()
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
+
+	<-entered
+	cancel()
+	// A worker stopped together with the server would see the request unanswered.
+	time.AfterFunc(100*time.Millisecond, func() { close(release) })
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not return after the context was canceled")
+	}
+	assert.True(t, answeredBeforeStop, "the workers are stopped only after the server has drained")
+}
+
+func TestRun_ReportsAFailedWorker(t *testing.T) {
+	t.Parallel()
+	errWorker := errors.New("outbox unreachable")
+	a, _, worker := newServedApp(t, http.NotFoundHandler(), errWorker)
+	ctx, cancel := context.WithCancel(t.Context())
+	go func() {
+		<-worker.started
+		cancel()
+	}()
+
+	err := a.Run(ctx)
+
+	require.ErrorIs(t, err, errWorker)
+	assert.Contains(t, err.Error(), "workers: outbox unreachable")
 }
 
 func TestRun_FailsWhenThePortIsTaken(t *testing.T) {
 	t.Parallel()
-	a, _ := newServedApp(t, http.NotFoundHandler())
+	a, _, worker := newServedApp(t, http.NotFoundHandler(), nil)
 	taken, err := net.Listen("tcp", a.srv.Addr)
 	require.NoError(t, err)
 	defer taken.Close()
@@ -271,6 +369,98 @@ func TestRun_FailsWhenThePortIsTaken(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "http server")
+	assert.True(t, isClosed(worker.stopped), "the workers are stopped and waited for")
+}
+
+func isClosed(ch <-chan struct{}) bool {
+	select {
+	case <-ch:
+		return true
+	default:
+		return false
+	}
+}
+
+// newSenderApp returns an App configured to deliver events as notifyCfg says, logging to logs.
+func newSenderApp(t *testing.T, notifyCfg config.NotifyConfig, logs *syncBuffer) *App {
+	t.Helper()
+	cfg := testConfig(t, time.Second)
+	cfg.Notify = notifyCfg
+	log := newTestLogger(logs)
+	return &App{cfg: cfg, base: log, log: log}
+}
+
+func testOutboxEvent() domain.OutboxEvent {
+	return domain.OutboxEvent{ID: 42, Type: domain.EventTaskAssigned, Payload: []byte(`{"task_id": 11}`), Attempts: 1}
+}
+
+func TestNewSender_FollowsTheConfiguration(t *testing.T) {
+	t.Parallel()
+
+	t.Run("log without a webhook", func(t *testing.T) {
+		t.Parallel()
+		var logs syncBuffer
+		a := newSenderApp(t, config.NotifyConfig{WebhookTimeout: time.Second}, &logs)
+
+		require.NoError(t, a.newSender().Send(t.Context(), testOutboxEvent()))
+
+		records := logs.records(t)
+		require.Len(t, records, 1)
+		assert.Equal(t, "event delivered", records[0]["msg"])
+		assert.Equal(t, "notify", records[0]["component"])
+	})
+
+	t.Run("webhook at the configured URL", func(t *testing.T) {
+		t.Parallel()
+		posted := make(chan string, 1)
+		srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+			posted <- r.Method + " " + r.URL.Path
+		}))
+		t.Cleanup(srv.Close)
+		var logs syncBuffer
+		a := newSenderApp(t, config.NotifyConfig{WebhookURL: srv.URL + "/events", WebhookTimeout: time.Second}, &logs)
+
+		require.NoError(t, a.newSender().Send(t.Context(), testOutboxEvent()))
+
+		assert.Equal(t, "POST /events", <-posted)
+		assert.Empty(t, logs.records(t), "the event goes to the webhook only")
+	})
+
+	t.Run("webhook within the configured timeout", func(t *testing.T) {
+		t.Parallel()
+		release := make(chan struct{})
+		srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			<-release // answers only once the test is over
+		}))
+		t.Cleanup(srv.Close)
+		t.Cleanup(func() { close(release) }) // runs first, so Close does not wait for the handler
+		a := newSenderApp(t, config.NotifyConfig{WebhookURL: srv.URL, WebhookTimeout: 50 * time.Millisecond}, &syncBuffer{})
+		// A sender without the configured timeout would wait for this deadline instead.
+		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+		defer cancel()
+
+		start := time.Now()
+		err := a.newSender().Send(ctx, testOutboxEvent())
+
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		assert.Less(t, time.Since(start), 5*time.Second)
+	})
+}
+
+func TestDispatcherConfig_FollowsTheConfiguration(t *testing.T) {
+	t.Parallel()
+	cfg := testConfig(t, time.Second)
+	cfg.Outbox = config.OutboxConfig{PollInterval: 250 * time.Millisecond, BatchSize: 20, MaxAttempts: 7, Lease: time.Minute}
+	cfg.Notify.WebhookTimeout = 15 * time.Second
+	a := &App{cfg: cfg}
+
+	assert.Equal(t, service.DispatcherConfig{
+		PollInterval: 250 * time.Millisecond,
+		BatchSize:    20,
+		MaxAttempts:  7,
+		Lease:        time.Minute,
+		SendTimeout:  15 * time.Second,
+	}, a.dispatcherConfig())
 }
 
 func TestClose_IsIdempotent(t *testing.T) {

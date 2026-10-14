@@ -30,11 +30,17 @@ func NewTxManager(db *sqlx.DB) *TxManager {
 // when fn returns nil and rolls back when fn fails or panics; a panic keeps propagating
 // after the rollback.
 func (m *TxManager) WithinTx(ctx context.Context, fn func(ctx context.Context) error) error {
+	return m.withinTx(ctx, nil, fn)
+}
+
+// withinTx is WithinTx beginning a new transaction with opts. A transaction that fn joins
+// keeps the options it was begun with.
+func (m *TxManager) withinTx(ctx context.Context, opts *sql.TxOptions, fn func(ctx context.Context) error) error {
 	if _, ok := txFrom(ctx); ok {
 		return fn(ctx)
 	}
 
-	tx, err := m.db.BeginTxx(ctx, nil)
+	tx, err := m.db.BeginTxx(ctx, opts)
 	if err != nil {
 		return apperror.Internal("begin transaction", err)
 	}

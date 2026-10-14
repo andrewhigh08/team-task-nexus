@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"slices"
 	"strconv"
@@ -30,6 +31,7 @@ const (
 	minJWTSecretBytes = 32
 	minJWTTTL         = time.Minute
 	maxJWTTTL         = 720 * time.Hour
+	maxOutboxBatch    = 500
 )
 
 var (
@@ -47,6 +49,8 @@ type Config struct {
 	Password  PasswordConfig
 	RateLimit RateLimitConfig
 	Cache     CacheConfig
+	Outbox    OutboxConfig
+	Notify    NotifyConfig
 }
 
 // ServerConfig configures the HTTP listener. TrustProxyHeaders takes client addresses from
@@ -115,6 +119,22 @@ type CacheConfig struct {
 	TaskListTTL time.Duration `env:"CACHE_TASK_LIST_TTL" env-default:"5m"`
 }
 
+// OutboxConfig configures the delivery of the events in the outbox: every PollInterval up to
+// BatchSize due events are leased for Lease and delivered, each up to MaxAttempts times.
+type OutboxConfig struct {
+	PollInterval time.Duration `env:"OUTBOX_POLL_INTERVAL" env-default:"1s"`
+	BatchSize    int           `env:"OUTBOX_BATCH_SIZE" env-default:"50"`
+	MaxAttempts  int           `env:"OUTBOX_MAX_ATTEMPTS" env-default:"10"`
+	Lease        time.Duration `env:"OUTBOX_LEASE" env-default:"30s"`
+}
+
+// NotifyConfig configures where events are delivered: POSTed to WebhookURL when it is set,
+// written to the log otherwise. The URL may carry a secret token and is never logged.
+type NotifyConfig struct {
+	WebhookURL     string        `env:"NOTIFY_WEBHOOK_URL"`
+	WebhookTimeout time.Duration `env:"NOTIFY_WEBHOOK_TIMEOUT" env-default:"5s"`
+}
+
 // Load reads the configuration from a .env file (when present) and the environment, then validates it.
 func Load() (*Config, error) {
 	if _, err := os.Stat(".env"); err == nil {
@@ -145,6 +165,8 @@ func (c *Config) Validate() error {
 		c.Password.validate(),
 		c.RateLimit.validate(),
 		c.Cache.validate(),
+		c.Outbox.validate(c.Notify.WebhookTimeout),
+		c.Notify.validate(),
 	)...)
 }
 
@@ -226,6 +248,38 @@ func (c RateLimitConfig) validate() []error {
 
 func (c CacheConfig) validate() []error {
 	return []error{positive("CACHE_TASK_LIST_TTL", c.TaskListTTL)}
+}
+
+// validate requires the lease to outlast a webhook delivery: the dispatcher starts a delivery
+// only while the lease of its batch outlasts the webhook timeout, so that no other replica can
+// claim the event while it is in flight, and with a shorter lease it would deliver nothing.
+func (c OutboxConfig) validate(webhookTimeout time.Duration) []error {
+	errs := []error{
+		positive("OUTBOX_POLL_INTERVAL", c.PollInterval),
+		positive("OUTBOX_MAX_ATTEMPTS", c.MaxAttempts),
+		positive("OUTBOX_LEASE", c.Lease),
+	}
+	if c.BatchSize < 1 || c.BatchSize > maxOutboxBatch {
+		errs = append(errs, fmt.Errorf("OUTBOX_BATCH_SIZE must be between 1 and %d, got %d", maxOutboxBatch, c.BatchSize))
+	}
+	if c.Lease > 0 && c.Lease <= webhookTimeout {
+		errs = append(errs, fmt.Errorf("OUTBOX_LEASE must be longer than NOTIFY_WEBHOOK_TIMEOUT (%s), got %s", webhookTimeout, c.Lease))
+	}
+	return errs
+}
+
+// validate never echoes the webhook URL, which may carry a secret token.
+func (c NotifyConfig) validate() []error {
+	errs := []error{positive("NOTIFY_WEBHOOK_TIMEOUT", c.WebhookTimeout)}
+	if c.WebhookURL != "" && !isHTTPURL(c.WebhookURL) {
+		errs = append(errs, errors.New("NOTIFY_WEBHOOK_URL must be an absolute http or https URL"))
+	}
+	return errs
+}
+
+func isHTTPURL(raw string) bool {
+	u, err := url.Parse(raw)
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
 }
 
 func validPort(name string, port int) error {

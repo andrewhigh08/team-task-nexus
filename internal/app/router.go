@@ -16,8 +16,8 @@ func (a *App) newRouter() (http.Handler, error) {
 	userRepo := mysqlrepo.NewUserRepo(a.db)
 	teamRepo := mysqlrepo.NewTeamRepo(a.db)
 	taskRepo := mysqlrepo.NewTaskRepo(a.db)
+	outbox := mysqlrepo.NewOutboxRepo(a.db)
 	txManager := mysqlrepo.NewTxManager(a.db)
-	notifier := service.NewNotificationService()
 
 	authSvc, err := service.NewAuthService(userRepo, service.AuthConfig{
 		Secret:     []byte(a.cfg.JWT.Secret),
@@ -33,13 +33,12 @@ func (a *App) newRouter() (http.Handler, error) {
 		return nil, err
 	}
 	taskSvc, err := service.NewTaskService(service.TaskDeps{
-		Tasks:    taskRepo,
-		History:  mysqlrepo.NewTaskHistoryRepo(a.db),
-		Teams:    teamRepo,
-		Users:    userRepo,
-		Cache:    redisstore.NewTaskListCache(a.rdb, a.cfg.Cache.TaskListTTL),
-		Tx:       txManager,
-		Notifier: notifier,
+		Tasks:   taskRepo,
+		History: mysqlrepo.NewTaskHistoryRepo(a.db),
+		Teams:   teamRepo,
+		Cache:   redisstore.NewTaskListCache(a.rdb, a.cfg.Cache.TaskListTTL),
+		Outbox:  outbox,
+		Tx:      txManager,
 	})
 	if err != nil {
 		return nil, err
@@ -48,7 +47,8 @@ func (a *App) newRouter() (http.Handler, error) {
 		Comments: mysqlrepo.NewCommentRepo(a.db),
 		Tasks:    taskRepo,
 		Teams:    teamRepo,
-		Notifier: notifier,
+		Outbox:   outbox,
+		Tx:       txManager,
 	})
 	if err != nil {
 		return nil, err

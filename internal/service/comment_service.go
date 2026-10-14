@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/andrewhigh08/team-task-nexus/internal/domain"
-	"github.com/andrewhigh08/team-task-nexus/internal/pkg/logger"
 	"github.com/andrewhigh08/team-task-nexus/internal/port"
 )
 
@@ -15,15 +14,18 @@ type CommentDeps struct {
 	Comments port.CommentRepository
 	Tasks    port.TaskRepository
 	Teams    port.TeamRepository
-	Notifier port.NotificationService
+	Outbox   port.OutboxRepository
+	Tx       port.TxManager
 }
 
-// CommentService implements port.CommentService.
+// CommentService implements port.CommentService. Every new comment writes a task.commented
+// event to the outbox in the transaction that inserts it.
 type CommentService struct {
 	comments port.CommentRepository
 	tasks    port.TaskRepository
 	teams    port.TeamRepository
-	notifier port.NotificationService
+	outbox   port.OutboxRepository
+	tx       port.TxManager
 }
 
 // NewCommentService validates deps and returns a CommentService.
@@ -36,13 +38,21 @@ func NewCommentService(deps CommentDeps) (*CommentService, error) {
 		missing = "task repository"
 	case deps.Teams == nil:
 		missing = "team repository"
-	case deps.Notifier == nil:
-		missing = "notification service"
+	case deps.Outbox == nil:
+		missing = "outbox repository"
+	case deps.Tx == nil:
+		missing = "transaction manager"
 	}
 	if missing != "" {
 		return nil, errors.New("comment service: " + missing + " is required")
 	}
-	return &CommentService{comments: deps.Comments, tasks: deps.Tasks, teams: deps.Teams, notifier: deps.Notifier}, nil
+	return &CommentService{
+		comments: deps.Comments,
+		tasks:    deps.Tasks,
+		teams:    deps.Teams,
+		outbox:   deps.Outbox,
+		tx:       deps.Tx,
+	}, nil
 }
 
 // Create adds a comment by userID to a task of one of the user's teams.
@@ -54,6 +64,20 @@ func (s *CommentService) Create(ctx context.Context, userID, taskID int64, in po
 		return nil, err
 	}
 
+	var comment *domain.Comment
+	err := s.tx.WithinTx(ctx, func(ctx context.Context) error {
+		var err error
+		comment, err = s.create(ctx, userID, taskID, content)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return comment, nil
+}
+
+// create is the transactional part of Create.
+func (s *CommentService) create(ctx context.Context, userID, taskID int64, content string) (*domain.Comment, error) {
 	task, err := loadTask(ctx, s.tasks, s.teams, taskID, userID)
 	if err != nil {
 		return nil, err
@@ -67,9 +91,19 @@ func (s *CommentService) Create(ctx context.Context, userID, taskID int64, in po
 	if err != nil {
 		return nil, err
 	}
-
-	if err := s.notifier.NotifyCommentAdded(ctx, comment, task); err != nil {
-		logger.FromContext(ctx).Warn("comment notification failed", "task_id", taskID, "comment_id", id, "error", err)
+	event, err := taskCommentedEvent(domain.TaskCommented{
+		TaskID:         task.ID,
+		TeamID:         task.TeamID,
+		CommentID:      comment.ID,
+		AuthorID:       userID,
+		TaskCreatorID:  task.CreatorID,
+		TaskAssigneeID: task.AssigneeID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := s.outbox.Add(ctx, event); err != nil {
+		return nil, err
 	}
 	return comment, nil
 }

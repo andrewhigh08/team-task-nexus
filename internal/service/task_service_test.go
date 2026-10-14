@@ -25,14 +25,13 @@ import (
 
 func (f *fixture) taskDeps() TaskDeps {
 	return TaskDeps{
-		Tasks:    f.tasks,
-		History:  f.history,
-		Teams:    f.teams,
-		Users:    f.users,
-		Cache:    f.cache,
-		Tx:       f.tx,
-		Notifier: f.notifier,
-		Clock:    fixedClock,
+		Tasks:   f.tasks,
+		History: f.history,
+		Teams:   f.teams,
+		Cache:   f.cache,
+		Outbox:  f.outbox,
+		Tx:      f.tx,
+		Clock:   fixedClock,
 	}
 }
 
@@ -103,10 +102,9 @@ func TestNewTaskService_RejectsMissingDeps(t *testing.T) {
 		{name: "task repository", mutate: func(d *TaskDeps) { d.Tasks = nil }, want: "task repository is required"},
 		{name: "history repository", mutate: func(d *TaskDeps) { d.History = nil }, want: "task history repository is required"},
 		{name: "team repository", mutate: func(d *TaskDeps) { d.Teams = nil }, want: "team repository is required"},
-		{name: "user repository", mutate: func(d *TaskDeps) { d.Users = nil }, want: "user repository is required"},
 		{name: "cache", mutate: func(d *TaskDeps) { d.Cache = nil }, want: "task list cache is required"},
+		{name: "outbox", mutate: func(d *TaskDeps) { d.Outbox = nil }, want: "outbox repository is required"},
 		{name: "transaction manager", mutate: func(d *TaskDeps) { d.Tx = nil }, want: "transaction manager is required"},
-		{name: "notifier", mutate: func(d *TaskDeps) { d.Notifier = nil }, want: "notification service is required"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -130,6 +128,7 @@ func TestTaskService_Create(t *testing.T) {
 		in       port.CreateTaskInput
 		want     domain.Task
 		assignee int64
+		event    string // payload of the task.assigned event; none when empty
 	}{
 		{
 			name: "defaults to medium priority, trims text",
@@ -150,6 +149,7 @@ func TestTaskService_Create(t *testing.T) {
 				Priority: domain.TaskPriorityHigh, CreatorID: memberUser, AssigneeID: new(adminUser), DueDate: &due,
 			},
 			assignee: adminUser,
+			event:    `{"task_id": 11, "team_id": 7, "title": "Rotate the certificates", "assignee_id": 2, "actor_id": 3}`,
 		},
 	}
 	for _, tt := range tests {
@@ -163,14 +163,15 @@ func TestTaskService_Create(t *testing.T) {
 			if tt.assignee != 0 {
 				f.expectRole(inTx, tt.assignee, domain.TeamRoleAdmin)
 			}
-			f.tasks.EXPECT().Create(inTx, &tt.want).Return(testTaskID, nil)
-			f.tasks.EXPECT().GetByID(inTx, testTaskID).Return(stored, nil)
-			f.cache.EXPECT().Invalidate(afterTx, testTeamID).Return(nil)
-			if tt.assignee != 0 {
-				assignee := &domain.User{ID: tt.assignee, Email: "ada@example.com"}
-				f.users.EXPECT().GetByID(afterTx, tt.assignee).Return(assignee, nil)
-				f.notifier.EXPECT().NotifyTaskAssigned(afterTx, stored, assignee).Return(nil)
+			calls := []any{
+				f.tasks.EXPECT().Create(inTx, &tt.want).Return(testTaskID, nil),
+				f.tasks.EXPECT().GetByID(inTx, testTaskID).Return(stored, nil),
 			}
+			if tt.event != "" {
+				calls = append(calls, f.expectEvent(t, domain.EventTaskAssigned, tt.event))
+			}
+			calls = append(calls, f.cache.EXPECT().Invalidate(afterTx, testTeamID).Return(nil))
+			gomock.InOrder(calls...)
 
 			task, err := f.taskService(t).Create(t.Context(), memberUser, tt.in)
 
@@ -249,50 +250,6 @@ func TestTaskService_Create_Rejections(t *testing.T) {
 	})
 }
 
-func TestTaskService_Create_SucceedsWhenTheAssigneeCannotBeNotified(t *testing.T) {
-	t.Parallel()
-	assignee := &domain.User{ID: adminUser, Email: "ada@example.com"}
-	tests := []struct {
-		name  string
-		setup func(f *fixture, stored *domain.Task)
-	}{
-		{
-			name: "assignee lookup fails",
-			setup: func(f *fixture, _ *domain.Task) {
-				f.users.EXPECT().GetByID(afterTx, adminUser).Return(nil, errors.New("connection reset by peer"))
-			},
-		},
-		{
-			name: "notifier fails",
-			setup: func(f *fixture, stored *domain.Task) {
-				f.users.EXPECT().GetByID(afterTx, adminUser).Return(assignee, nil)
-				f.notifier.EXPECT().NotifyTaskAssigned(afterTx, stored, assignee).Return(errors.New("smtp: timeout"))
-			},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			f := newFixture(t)
-			stored := testTask()
-			stored.AssigneeID = new(adminUser)
-			f.expectTx()
-			f.expectRole(inTx, memberUser, domain.TeamRoleMember)
-			f.expectRole(inTx, adminUser, domain.TeamRoleAdmin)
-			f.tasks.EXPECT().Create(inTx, gomock.Any()).Return(testTaskID, nil)
-			f.tasks.EXPECT().GetByID(inTx, testTaskID).Return(stored, nil)
-			f.cache.EXPECT().Invalidate(afterTx, testTeamID).Return(nil)
-			tt.setup(f, stored)
-
-			task, err := f.taskService(t).Create(t.Context(), memberUser,
-				port.CreateTaskInput{TeamID: testTeamID, Title: "t", AssigneeID: new(adminUser)})
-
-			require.NoError(t, err, "the task is committed, so a failed notification must not fail the request")
-			assert.Same(t, stored, task)
-		})
-	}
-}
-
 func TestTaskService_Get(t *testing.T) {
 	t.Parallel()
 
@@ -343,6 +300,7 @@ func TestTaskService_Update_RecordsEveryChangedField(t *testing.T) {
 		changes [][3]string // field, old value, new value
 		// assignee is the new assignee whose membership must be checked; 0 means none.
 		assignee int64
+		event    string // payload of the task.assigned event; none when empty
 	}{
 		{
 			name:    "title, trimmed",
@@ -390,6 +348,19 @@ func TestTaskService_Update_RecordsEveryChangedField(t *testing.T) {
 			want:     func(t *domain.Task) { t.AssigneeID = new(adminUser) },
 			changes:  [][3]string{{"assignee_id", "", "2"}},
 			assignee: adminUser,
+			event:    `{"task_id": 11, "team_id": 7, "title": "Rotate the certificates", "assignee_id": 2, "actor_id": 3}`,
+		},
+		{
+			name:   "assignee replaced along with the title",
+			stored: func(t *domain.Task) { t.AssigneeID = new(adminUser) },
+			in:     port.UpdateTaskInput{Title: opt.Of("Renew the certificates"), AssigneeID: opt.Of(ownerUser)},
+			want: func(t *domain.Task) {
+				t.Title = "Renew the certificates"
+				t.AssigneeID = new(ownerUser)
+			},
+			changes:  [][3]string{{"title", "Rotate the certificates", "Renew the certificates"}, {"assignee_id", "2", "1"}},
+			assignee: ownerUser,
+			event:    `{"task_id": 11, "team_id": 7, "title": "Renew the certificates", "assignee_id": 1, "actor_id": 3}`,
 		},
 		{
 			name:    "assignee cleared",
@@ -397,6 +368,13 @@ func TestTaskService_Update_RecordsEveryChangedField(t *testing.T) {
 			in:      port.UpdateTaskInput{AssigneeID: opt.Null[int64]()},
 			want:    func(t *domain.Task) { t.AssigneeID = nil },
 			changes: [][3]string{{"assignee_id", "2", ""}},
+		},
+		{
+			name:    "assignee kept",
+			stored:  func(t *domain.Task) { t.AssigneeID = new(adminUser) },
+			in:      port.UpdateTaskInput{Priority: opt.Of(domain.TaskPriorityLow), AssigneeID: opt.Of(adminUser)},
+			want:    func(t *domain.Task) { t.Priority = domain.TaskPriorityLow },
+			changes: [][3]string{{"priority", "2", "1"}},
 		},
 		{
 			name:    "due date set",
@@ -445,12 +423,18 @@ func TestTaskService_Update_RecordsEveryChangedField(t *testing.T) {
 			if tt.assignee != 0 {
 				f.expectRole(inTx, tt.assignee, domain.TeamRoleAdmin)
 			}
-			gomock.InOrder(
+			calls := []any{
 				f.tasks.EXPECT().Update(inTx, &written).Return(nil),
 				f.history.EXPECT().Add(inTx, changes).Return(nil),
+			}
+			if tt.event != "" {
+				calls = append(calls, f.expectEvent(t, domain.EventTaskAssigned, tt.event))
+			}
+			calls = append(calls,
 				f.tasks.EXPECT().GetByID(inTx, testTaskID).Return(reread, nil),
 				f.cache.EXPECT().Invalidate(afterTx, testTeamID).Return(nil),
 			)
+			gomock.InOrder(calls...)
 
 			task, err := f.taskService(t).Update(t.Context(), memberUser, testTaskID, tt.in)
 
@@ -590,6 +574,60 @@ func TestTaskService_Update_RollsBackWhenTheHistoryCannotBeWritten(t *testing.T)
 	require.ErrorIs(t, err, boom)
 	require.ErrorIs(t, result.err, boom, "the transaction must be rolled back")
 	assert.Nil(t, task)
+}
+
+func TestTaskService_RollsBackWhenTheEventCannotBeStored(t *testing.T) {
+	t.Parallel()
+	boom := apperror.Internal("add outbox events", errors.New("lock wait timeout exceeded"))
+	tests := []struct {
+		name  string
+		setup func(f *fixture)
+		write func(ctx context.Context, svc *TaskService) (*domain.Task, error)
+	}{
+		{
+			name: "create",
+			setup: func(f *fixture) {
+				stored := testTask()
+				stored.AssigneeID = new(adminUser)
+				f.expectRole(inTx, memberUser, domain.TeamRoleMember)
+				f.expectRole(inTx, adminUser, domain.TeamRoleAdmin)
+				f.tasks.EXPECT().Create(inTx, gomock.Any()).Return(testTaskID, nil)
+				f.tasks.EXPECT().GetByID(inTx, testTaskID).Return(stored, nil)
+			},
+			write: func(ctx context.Context, svc *TaskService) (*domain.Task, error) {
+				return svc.Create(ctx, memberUser, port.CreateTaskInput{TeamID: testTeamID, Title: "t", AssigneeID: new(adminUser)})
+			},
+		},
+		{
+			name: "update",
+			setup: func(f *fixture) {
+				f.tasks.EXPECT().GetByIDForUpdate(inTx, testTaskID).Return(testTask(), nil)
+				f.expectRole(inTx, memberUser, domain.TeamRoleMember)
+				f.expectRole(inTx, adminUser, domain.TeamRoleAdmin)
+				f.tasks.EXPECT().Update(inTx, gomock.Any()).Return(nil)
+				f.history.EXPECT().Add(inTx, gomock.Any()).Return(nil)
+			},
+			write: func(ctx context.Context, svc *TaskService) (*domain.Task, error) {
+				return svc.Update(ctx, memberUser, testTaskID, port.UpdateTaskInput{AssigneeID: opt.Of(adminUser)})
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			f := newFixture(t)
+			result := f.expectTx()
+			tt.setup(f)
+			f.outbox.EXPECT().Add(inTx, gomock.Any()).Return(boom)
+			// No cache invalidation: nothing was committed.
+
+			task, err := tt.write(t.Context(), f.taskService(t))
+
+			require.ErrorIs(t, err, boom)
+			require.ErrorIs(t, result.err, boom, "the change must be rolled back with its event")
+			assert.Nil(t, task)
+		})
+	}
 }
 
 // committedWrite is a write of the test task: setup expects the calls the write makes up to

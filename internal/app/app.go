@@ -1,6 +1,6 @@
 // Package app wires the service together: it connects to MySQL and Redis, applies the
-// migrations, builds the repositories, services and HTTP router, and runs the HTTP server until
-// it is asked to shut down.
+// migrations, builds the repositories, services and HTTP router, and runs the HTTP server and
+// the outbox dispatcher until it is asked to shut down.
 package app
 
 import (
@@ -20,18 +20,19 @@ import (
 	"github.com/andrewhigh08/team-task-nexus/internal/pkg/logger"
 )
 
-// App is a fully wired instance of the service. Build it with New, serve it with Run or
-// through Handler, and release it with Close.
+// App is a fully wired instance of the service. Build it with New, serve it with Run, or
+// through Handler next to RunWorkers, and release it with Close.
 type App struct {
 	cfg     *config.Config
 	base    *logger.Logger // logger handed to every component
 	log     *logger.Logger // base tagged with the app component
 	version string
 
-	db     *sqlx.DB
-	rdb    *redis.Client
-	router http.Handler
-	srv    *http.Server
+	db         *sqlx.DB
+	rdb        *redis.Client
+	router     http.Handler
+	srv        *http.Server
+	dispatcher worker
 
 	closeOnce sync.Once
 	closeErr  error
@@ -68,6 +69,11 @@ func (a *App) init(ctx context.Context) error {
 	}
 	a.router = router
 	a.srv = a.newServer()
+	dispatcher, err := a.newDispatcher()
+	if err != nil {
+		return err
+	}
+	a.dispatcher = dispatcher
 	return nil
 }
 

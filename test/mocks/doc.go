@@ -3,6 +3,7 @@
 package mocks
 
 //go:generate go run go.uber.org/mock/mockgen@v0.6.0 -source=../../internal/port/cache.go -destination=mock_cache.go -package=mocks
+//go:generate go run go.uber.org/mock/mockgen@v0.6.0 -source=../../internal/port/outbox.go -destination=mock_outbox.go -package=mocks
 //go:generate go run go.uber.org/mock/mockgen@v0.6.0 -source=../../internal/port/ratelimit.go -destination=mock_ratelimit.go -package=mocks
 //go:generate go run go.uber.org/mock/mockgen@v0.6.0 -source=../../internal/port/repository.go -destination=mock_repository.go -package=mocks
 //go:generate go run go.uber.org/mock/mockgen@v0.6.0 -source=../../internal/port/service.go -destination=mock_service.go -package=mocks

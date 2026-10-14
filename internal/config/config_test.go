@@ -82,6 +82,8 @@ func validConfig() Config {
 		Password:  PasswordConfig{BcryptCost: 10},
 		RateLimit: RateLimitConfig{APIPerMinute: 100, AuthPerMinute: 10},
 		Cache:     CacheConfig{TaskListTTL: 5 * time.Minute},
+		Outbox:    OutboxConfig{PollInterval: time.Second, BatchSize: 50, MaxAttempts: 10, Lease: 30 * time.Second},
+		Notify:    NotifyConfig{WebhookTimeout: 5 * time.Second},
 	}
 }
 
@@ -106,7 +108,8 @@ func TestLoad_EnvironmentOverridesEveryDefault(t *testing.T) {
 		"REDIS_ADDR": "cache.internal:6380", "REDIS_PASSWORD": "rpw", "REDIS_DB": "3",
 		"JWT_SECRET": strings.Repeat("s", 64), "JWT_ISSUER": "nexus-staging", "JWT_TTL": "15m",
 		"BCRYPT_COST": "12", "RATE_LIMIT_API_PER_MINUTE": "600", "RATE_LIMIT_AUTH_PER_MINUTE": "20",
-		"CACHE_TASK_LIST_TTL": "30s",
+		"CACHE_TASK_LIST_TTL": "30s", "OUTBOX_POLL_INTERVAL": "250ms", "OUTBOX_BATCH_SIZE": "100", "OUTBOX_MAX_ATTEMPTS": "5",
+		"OUTBOX_LEASE": "1m", "NOTIFY_WEBHOOK_URL": "https://hooks.example.com/tasks", "NOTIFY_WEBHOOK_TIMEOUT": "10s",
 	}
 	assert.ElementsMatch(t, envNames(reflect.TypeFor[Config]()), slices.Collect(maps.Keys(overrides)),
 		"every variable the configuration reads must be overridden by this test")
@@ -130,6 +133,8 @@ func TestLoad_EnvironmentOverridesEveryDefault(t *testing.T) {
 		Password:  PasswordConfig{BcryptCost: 12},
 		RateLimit: RateLimitConfig{APIPerMinute: 600, AuthPerMinute: 20},
 		Cache:     CacheConfig{TaskListTTL: 30 * time.Second},
+		Outbox:    OutboxConfig{PollInterval: 250 * time.Millisecond, BatchSize: 100, MaxAttempts: 5, Lease: time.Minute},
+		Notify:    NotifyConfig{WebhookURL: "https://hooks.example.com/tasks", WebhookTimeout: 10 * time.Second},
 	}
 	assert.Equal(t, want, *cfg)
 }
@@ -174,6 +179,11 @@ func TestLoad_RejectsUnparsableValues(t *testing.T) {
 		{name: "boolean", key: "TRUST_PROXY_HEADERS", value: "maybe"},
 		{name: "bcrypt cost", key: "BCRYPT_COST", value: "ten"},
 		{name: "cache ttl without a unit", key: "CACHE_TASK_LIST_TTL", value: "300"},
+		{name: "poll interval without a unit", key: "OUTBOX_POLL_INTERVAL", value: "1"},
+		{name: "batch size", key: "OUTBOX_BATCH_SIZE", value: "fifty"},
+		{name: "max attempts", key: "OUTBOX_MAX_ATTEMPTS", value: "1e3"},
+		{name: "lease in words", key: "OUTBOX_LEASE", value: "half a minute"},
+		{name: "webhook timeout without a unit", key: "NOTIFY_WEBHOOK_TIMEOUT", value: "5"},
 	}
 
 	for _, tt := range tests {
@@ -267,6 +277,37 @@ func TestValidate(t *testing.T) {
 		{name: "one second task list ttl", mutate: func(c *Config) { c.Cache.TaskListTTL = time.Second }},
 		{name: "zero task list ttl", mutate: func(c *Config) { c.Cache.TaskListTTL = 0 }, wantErr: "CACHE_TASK_LIST_TTL must be greater than zero, got 0s"},
 		{name: "negative task list ttl", mutate: func(c *Config) { c.Cache.TaskListTTL = -time.Minute }, wantErr: "CACHE_TASK_LIST_TTL"},
+
+		{name: "short poll interval", mutate: func(c *Config) { c.Outbox.PollInterval = time.Millisecond }},
+		{name: "zero poll interval", mutate: func(c *Config) { c.Outbox.PollInterval = 0 }, wantErr: "OUTBOX_POLL_INTERVAL must be greater than zero, got 0s"},
+		{name: "batch of one", mutate: func(c *Config) { c.Outbox.BatchSize = 1 }},
+		{name: "largest batch", mutate: func(c *Config) { c.Outbox.BatchSize = 500 }},
+		{name: "empty batch", mutate: func(c *Config) { c.Outbox.BatchSize = 0 }, wantErr: "OUTBOX_BATCH_SIZE must be between 1 and 500, got 0"},
+		{name: "batch above the maximum", mutate: func(c *Config) { c.Outbox.BatchSize = 501 }, wantErr: "OUTBOX_BATCH_SIZE"},
+		{name: "single attempt", mutate: func(c *Config) { c.Outbox.MaxAttempts = 1 }},
+		{name: "no attempts", mutate: func(c *Config) { c.Outbox.MaxAttempts = 0 }, wantErr: "OUTBOX_MAX_ATTEMPTS must be greater than zero, got 0"},
+		{name: "zero lease", mutate: func(c *Config) { c.Outbox.Lease = 0 }, wantErr: "OUTBOX_LEASE must be greater than zero, got 0s"},
+		{
+			name: "lease just longer than the webhook timeout", mutate: func(c *Config) { c.Outbox.Lease = c.Notify.WebhookTimeout + time.Millisecond },
+		},
+		{
+			name: "lease equal to the webhook timeout", mutate: func(c *Config) { c.Outbox.Lease = c.Notify.WebhookTimeout },
+			wantErr: "OUTBOX_LEASE must be longer than NOTIFY_WEBHOOK_TIMEOUT (5s), got 5s",
+		},
+		{
+			name: "webhook timeout longer than the lease", mutate: func(c *Config) { c.Notify.WebhookTimeout = time.Minute },
+			wantErr: "OUTBOX_LEASE must be longer than NOTIFY_WEBHOOK_TIMEOUT (1m0s), got 30s",
+		},
+
+		{name: "https webhook", mutate: func(c *Config) { c.Notify.WebhookURL = "https://hooks.example.com/t/abc?sig=1" }},
+		{name: "http webhook with a port", mutate: func(c *Config) { c.Notify.WebhookURL = "http://receiver:8081/events" }},
+		{name: "upper-case scheme", mutate: func(c *Config) { c.Notify.WebhookURL = "HTTPS://hooks.example.com" }},
+		{name: "relative webhook url", mutate: func(c *Config) { c.Notify.WebhookURL = "/events" }, wantErr: "NOTIFY_WEBHOOK_URL must be an absolute http or https URL"},
+		{name: "webhook url without a host", mutate: func(c *Config) { c.Notify.WebhookURL = "https:///events" }, wantErr: "NOTIFY_WEBHOOK_URL"},
+		{name: "webhook url without a scheme", mutate: func(c *Config) { c.Notify.WebhookURL = "hooks.example.com/events" }, wantErr: "NOTIFY_WEBHOOK_URL"},
+		{name: "non-http webhook url", mutate: func(c *Config) { c.Notify.WebhookURL = "ftp://hooks.example.com/events" }, wantErr: "NOTIFY_WEBHOOK_URL"},
+		{name: "unparsable webhook url", mutate: func(c *Config) { c.Notify.WebhookURL = "http://[::1" }, wantErr: "NOTIFY_WEBHOOK_URL"},
+		{name: "zero webhook timeout", mutate: func(c *Config) { c.Notify.WebhookTimeout = 0 }, wantErr: "NOTIFY_WEBHOOK_TIMEOUT must be greater than zero, got 0s"},
 	}
 
 	for _, tt := range tests {
@@ -297,9 +338,23 @@ func TestValidate_NeverEchoesTheSecret(t *testing.T) {
 	assert.NotContains(t, err.Error(), cfg.JWT.Secret)
 }
 
+func TestValidate_NeverEchoesTheWebhookURL(t *testing.T) {
+	t.Parallel()
+	cfg := validConfig()
+	cfg.Notify.WebhookURL = "hooks.example.com/token-s3cr3t"
+
+	err := cfg.Validate()
+
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "s3cr3t")
+}
+
 func TestValidate_ReportsEveryProblem(t *testing.T) {
 	t.Parallel()
-	cfg := Config{Database: DatabaseConfig{MaxIdleConns: -1}, Redis: RedisConfig{DB: -1}}
+	cfg := Config{
+		Database: DatabaseConfig{MaxIdleConns: -1}, Redis: RedisConfig{DB: -1},
+		Notify: NotifyConfig{WebhookURL: "not a url"},
+	}
 
 	err := cfg.Validate()
 
@@ -309,7 +364,8 @@ func TestValidate_ReportsEveryProblem(t *testing.T) {
 		"SERVER_SHUTDOWN_TIMEOUT", "LOG_LEVEL", "LOG_FORMAT", "DB_HOST", "DB_PORT", "DB_USER", "DB_NAME",
 		"DB_MAX_OPEN_CONNS", "DB_MAX_IDLE_CONNS", "DB_CONN_MAX_LIFETIME", "DB_CONNECT_TIMEOUT", "REDIS_ADDR", "REDIS_DB",
 		"JWT_SECRET", "JWT_ISSUER", "JWT_TTL", "BCRYPT_COST", "RATE_LIMIT_API_PER_MINUTE", "RATE_LIMIT_AUTH_PER_MINUTE",
-		"CACHE_TASK_LIST_TTL",
+		"CACHE_TASK_LIST_TTL", "OUTBOX_POLL_INTERVAL", "OUTBOX_BATCH_SIZE", "OUTBOX_MAX_ATTEMPTS", "OUTBOX_LEASE",
+		"NOTIFY_WEBHOOK_URL", "NOTIFY_WEBHOOK_TIMEOUT",
 	} {
 		assert.Contains(t, err.Error(), name)
 	}

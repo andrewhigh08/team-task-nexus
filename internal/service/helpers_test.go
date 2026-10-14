@@ -80,8 +80,8 @@ type fixture struct {
 	history  *mocks.MockTaskHistoryRepository
 	comments *mocks.MockCommentRepository
 	cache    *mocks.MockTaskListCache
+	outbox   *mocks.MockOutboxRepository
 	tx       *mocks.MockTxManager
-	notifier *mocks.MockNotificationService
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -94,8 +94,8 @@ func newFixture(t *testing.T) *fixture {
 		history:  mocks.NewMockTaskHistoryRepository(ctrl),
 		comments: mocks.NewMockCommentRepository(ctrl),
 		cache:    mocks.NewMockTaskListCache(ctrl),
+		outbox:   mocks.NewMockOutboxRepository(ctrl),
 		tx:       mocks.NewMockTxManager(ctrl),
-		notifier: mocks.NewMockNotificationService(ctrl),
 	}
 }
 
@@ -126,6 +126,19 @@ func (f *fixture) expectRole(ctx gomock.Matcher, userID int64, role domain.TeamR
 		return
 	}
 	call.Return(&domain.TeamMember{TeamID: testTeamID, UserID: userID, Role: role}, nil)
+}
+
+// expectEvent expects one event of type typ to be added to the outbox inside the transaction
+// and checks that its payload is the JSON document payload.
+func (f *fixture) expectEvent(t *testing.T, typ domain.EventType, payload string) *gomock.Call {
+	t.Helper()
+	return f.outbox.EXPECT().Add(inTx, gomock.Any()).DoAndReturn(
+		func(_ context.Context, events ...domain.NewEvent) error {
+			require.Len(t, events, 1)
+			assert.Equal(t, typ, events[0].Type)
+			assert.JSONEq(t, payload, string(events[0].Payload))
+			return nil
+		})
 }
 
 func fixedClock() time.Time {

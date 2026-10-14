@@ -77,3 +77,24 @@ func newCacheRequests() *prometheus.CounterVec {
 func RecordCacheRequest(cache, result string) {
 	CacheRequests.WithLabelValues(cache, result).Inc()
 }
+
+// Values of the result label of OutboxEvents: the event was delivered, will be delivered
+// again, or was given up on after its last attempt.
+const (
+	ResultSent   = "sent"
+	ResultRetry  = "retry"
+	ResultFailed = "failed"
+)
+
+// OutboxEvents counts the delivery attempts of outbox events by event type and result. Its
+// series appear with the first delivery of each type: the event types belong to the domain,
+// which this package does not depend on.
+var OutboxEvents = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "tasknexus_outbox_events_total",
+	Help: "Number of outbox event delivery attempts by event type and result.",
+}, []string{"type", "result"})
+
+// RecordOutboxEvent increments OutboxEvents for eventType and result.
+func RecordOutboxEvent(eventType, result string) {
+	OutboxEvents.WithLabelValues(eventType, result).Inc()
+}

@@ -2,6 +2,8 @@ package mysqlrepo
 
 import (
 	"context"
+	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"testing"
 
@@ -24,6 +26,53 @@ func newMockDB(t *testing.T) (*sqlx.DB, sqlmock.Sqlmock) {
 		_ = db.Close()
 	})
 	return sqlx.NewDb(db, "mysql"), mock
+}
+
+// sqlmockConn is the part of a go-sqlmock connection that database/sql uses.
+type sqlmockConn interface {
+	driver.Conn
+	driver.ConnBeginTx
+	driver.ExecerContext
+	driver.QueryerContext
+	driver.NamedValueChecker
+}
+
+// txOptionsRecorder hands every call to a go-sqlmock connection, which ignores the options a
+// transaction is begun with, and records those options.
+type txOptionsRecorder struct {
+	sqlmockConn
+	drv   driver.Driver
+	begun []driver.TxOptions
+}
+
+func (c *txOptionsRecorder) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
+	c.begun = append(c.begun, opts)
+	return c.sqlmockConn.BeginTx(ctx, opts)
+}
+
+// Connect makes txOptionsRecorder the connector of a database with a single connection.
+func (c *txOptionsRecorder) Connect(context.Context) (driver.Conn, error) { return c, nil }
+
+func (c *txOptionsRecorder) Driver() driver.Driver { return c.drv }
+
+// newTxOptionsMockDB is newMockDB that also returns the options of the transactions begun on
+// the database.
+func newTxOptionsMockDB(t *testing.T) (*sqlx.DB, sqlmock.Sqlmock, *txOptionsRecorder) {
+	t.Helper()
+	dsn := t.Name()
+	mockDB, mock, err := sqlmock.NewWithDSN(dsn)
+	require.NoError(t, err)
+	conn, err := mockDB.Driver().Open(dsn)
+	require.NoError(t, err)
+	recorder := &txOptionsRecorder{sqlmockConn: conn.(sqlmockConn), drv: mockDB.Driver()}
+	db := sql.OpenDB(recorder)
+	db.SetMaxOpenConns(1)
+	t.Cleanup(func() {
+		assert.NoError(t, mock.ExpectationsWereMet())
+		_ = db.Close()
+		_ = mockDB.Close()
+	})
+	return sqlx.NewDb(db, "mysql"), mock, recorder
 }
 
 func requireCode(t *testing.T, err error, code string) {

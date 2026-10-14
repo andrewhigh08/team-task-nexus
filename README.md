@@ -40,13 +40,14 @@ internal/
     ├── http/handler/                — HTTP-обработчики
     ├── http/middleware/             — JWT, rate limit, метрики, логирование
     ├── http/response/              — единый формат ответа API
-    ├── mysqlrepo/                  — sqlx-репозитории
+    ├── mysqlrepo/                  — sqlx-репозитории, transactional outbox
+    ├── notify/                     — доставка событий: webhook или лог
     └── redisstore/                 — кеш задач, rate limiter
 ```
 
 ## База данных
 
-6 таблиц, 10 внешних ключей:
+7 таблиц, 10 внешних ключей:
 
 - **users** — пользователи
 - **teams** — команды
@@ -54,6 +55,7 @@ internal/
 - **tasks** — задачи (статусы: todo/in_progress/review/done)
 - **task_history** — история изменений задач
 - **task_comments** — комментарии к задачам
+- **outbox** — события для доставки внешним системам (transactional outbox)
 
 ## API
 
@@ -115,7 +117,9 @@ make docker-up
 
 Требуется запущенный MySQL и Redis. Конфигурация читается из переменных окружения
 (`SERVER_*`, `LOG_*`, `DB_*`, `REDIS_*`, `JWT_SECRET`, `JWT_ISSUER`, `JWT_TTL`, `BCRYPT_COST`,
-`RATE_LIMIT_API_PER_MINUTE`, `RATE_LIMIT_AUTH_PER_MINUTE`, `TRUST_PROXY_HEADERS`, `CACHE_TASK_LIST_TTL`);
+`RATE_LIMIT_API_PER_MINUTE`, `RATE_LIMIT_AUTH_PER_MINUTE`, `TRUST_PROXY_HEADERS`, `CACHE_TASK_LIST_TTL`,
+`OUTBOX_POLL_INTERVAL`, `OUTBOX_BATCH_SIZE`, `OUTBOX_MAX_ATTEMPTS`, `OUTBOX_LEASE`, `NOTIFY_WEBHOOK_URL`,
+`NOTIFY_WEBHOOK_TIMEOUT`);
 файл `.env` в рабочем каталоге подхватывается, если есть, но не перекрывает уже заданные переменные.
 Обязателен только `JWT_SECRET` (не короче 32 байт), остальное имеет значения по умолчанию.
 Миграции применяются при старте.
@@ -178,8 +182,8 @@ make lint
 - **Кеширование**: списки задач одной команды (`team_id` задан) кешируются в Redis на `CACHE_TASK_LIST_TTL` (по умолчанию 5 минут); списки по всем командам пользователя не кешируются. Ключ страницы содержит номер версии списка команды (`tasks:team:<id>:v<ver>:...`), который хранится в счётчике `tasks:team:<id>:ver`; после коммита создания или изменения задачи счётчик увеличивается одним `INCR`, без поиска ключей через `SCAN`. Версия читается до запроса в MySQL, поэтому страница, прочитанная до параллельной записи, сохраняется под устаревшей версией и не отдаётся. Ошибки Redis не ломают запросы: чтение уходит в MySQL, а при неудачной инвалидации список может быть устаревшим не дольше TTL
 - **Rate limiting**: скользящее окно в Redis; каждое решение принимает один Lua-скрипт, а время берётся из Redis (`TIME`), поэтому лимит общий для всех реплик и не превышается при конкурентных запросах. 100 запросов в минуту на пользователя (`RATE_LIMIT_API_PER_MINUTE`) и 10 запросов в минуту на регистрацию и вход с одного IP (`RATE_LIMIT_AUTH_PER_MINUTE`, IPv6 считается по /64). IP клиента берётся из соединения; `X-Forwarded-For`/`X-Real-IP` учитываются только при `TRUST_PROXY_HEADERS=true` (за прокси, который перезаписывает эти заголовки). Ответы содержат `X-RateLimit-Limit` и `X-RateLimit-Remaining`, при отказе ответ 429 с `Retry-After`. Если Redis недоступен, запросы пропускаются (fail open) с предупреждением в логе
 - **История изменений**: все изменения задач записываются в таблицу `task_history`
-- **Circuit breaker**: сервис уведомлений с паттерном circuit breaker
+- **Transactional outbox**: назначение задачи (`task.assigned`) и новый комментарий (`task.commented`) записывают событие в таблицу `outbox` в той же транзакции, что и само изменение, поэтому событие существует ровно тогда, когда изменение закоммичено. Диспетчер раз в `OUTBOX_POLL_INTERVAL` забирает до `OUTBOX_BATCH_SIZE` готовых событий (`SELECT ... FOR UPDATE SKIP LOCKED` в транзакции READ COMMITTED, чтобы gap-блокировки не задерживали вставку новых событий), берёт их в аренду на `OUTBOX_LEASE` и доставляет вне транзакции: `POST` JSON `{"id","type","occurred_at","payload"}` на `NOTIFY_WEBHOOK_URL` с заголовками `X-Event-ID`/`X-Event-Type` или, если URL не задан, в лог. Очередная доставка начинается, только если аренда пачки продлится дольше `NOTIFY_WEBHOOK_TIMEOUT`, поэтому другая реплика не заберёт событие, пока оно доставляется; остаток пачки сразу возвращается в очередь, и попытка, засчитанная ему при аренде, отменяется. Неудачная доставка повторяется с экспоненциальной задержкой (1 с, 2 с, 4 с, ... до 5 минут), после `OUTBOX_MAX_ATTEMPTS` попыток событие помечается как failed. Доставка at-least-once: если реплика упала посреди доставки, событие снова станет доступно по истечении аренды, поэтому получатели дедуплицируют по `id`
 - **Изоляция команд**: задачи, история и комментарии видны только участникам команды; чужая команда или задача отвечает 404, а не 403
 - **Сложные SQL**: коррелированные подзапросы для статистики, CTE с оконной функцией RANK, запрос задач бывших участников
-- **Graceful shutdown**: корректное завершение HTTP-сервера с таймаутом
-- **Метрики Prometheus**: счётчики запросов, гистограммы latency, gauge активных соединений, решения rate limiter (`tasknexus_rate_limit_decisions_total{scope,result}`), обращения к кешу (`tasknexus_cache_requests_total{cache,result}`)
+- **Graceful shutdown**: корректное завершение HTTP-сервера с таймаутом; после него останавливается диспетчер outbox, дождавшись текущей доставки; запись её результата и возврат остатка пачки ограничены 5 с каждая, поэтому зависшая БД не затягивает остановку
+- **Метрики Prometheus**: счётчики запросов, гистограммы latency, gauge активных соединений, решения rate limiter (`tasknexus_rate_limit_decisions_total{scope,result}`), обращения к кешу (`tasknexus_cache_requests_total{cache,result}`), доставка событий outbox (`tasknexus_outbox_events_total{type,result}`)

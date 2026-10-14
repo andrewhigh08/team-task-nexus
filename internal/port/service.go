@@ -129,9 +129,3 @@ type CommentService interface {
 	// List returns the comments of the task, oldest first.
 	List(ctx context.Context, userID, taskID int64) ([]domain.Comment, error)
 }
-
-// NotificationService tells users about events that concern them.
-type NotificationService interface {
-	NotifyTaskAssigned(ctx context.Context, task *domain.Task, assignee *domain.User) error
-	NotifyCommentAdded(ctx context.Context, comment *domain.Comment, task *domain.Task) error
-}

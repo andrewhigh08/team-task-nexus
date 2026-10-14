@@ -24,26 +24,25 @@ const (
 
 // TaskDeps lists the collaborators of TaskService. A nil Clock means time.Now.
 type TaskDeps struct {
-	Tasks    port.TaskRepository
-	History  port.TaskHistoryRepository
-	Teams    port.TeamRepository
-	Users    port.UserRepository
-	Cache    port.TaskListCache
-	Tx       port.TxManager
-	Notifier port.NotificationService
-	Clock    func() time.Time
+	Tasks   port.TaskRepository
+	History port.TaskHistoryRepository
+	Teams   port.TeamRepository
+	Cache   port.TaskListCache
+	Outbox  port.OutboxRepository
+	Tx      port.TxManager
+	Clock   func() time.Time
 }
 
-// TaskService implements port.TaskService.
+// TaskService implements port.TaskService. Assigning a task to someone, on creation or later,
+// writes a task.assigned event to the outbox in the transaction of the change.
 type TaskService struct {
-	tasks    port.TaskRepository
-	history  port.TaskHistoryRepository
-	teams    port.TeamRepository
-	users    port.UserRepository
-	cache    port.TaskListCache
-	tx       port.TxManager
-	notifier port.NotificationService
-	now      func() time.Time
+	tasks   port.TaskRepository
+	history port.TaskHistoryRepository
+	teams   port.TeamRepository
+	cache   port.TaskListCache
+	outbox  port.OutboxRepository
+	tx      port.TxManager
+	now     func() time.Time
 }
 
 // NewTaskService validates deps and returns a TaskService.
@@ -56,14 +55,12 @@ func NewTaskService(deps TaskDeps) (*TaskService, error) {
 		missing = "task history repository"
 	case deps.Teams == nil:
 		missing = "team repository"
-	case deps.Users == nil:
-		missing = "user repository"
 	case deps.Cache == nil:
 		missing = "task list cache"
+	case deps.Outbox == nil:
+		missing = "outbox repository"
 	case deps.Tx == nil:
 		missing = "transaction manager"
-	case deps.Notifier == nil:
-		missing = "notification service"
 	}
 	if missing != "" {
 		return nil, errors.New("task service: " + missing + " is required")
@@ -72,14 +69,13 @@ func NewTaskService(deps TaskDeps) (*TaskService, error) {
 		deps.Clock = time.Now
 	}
 	return &TaskService{
-		tasks:    deps.Tasks,
-		history:  deps.History,
-		teams:    deps.Teams,
-		users:    deps.Users,
-		cache:    deps.Cache,
-		tx:       deps.Tx,
-		notifier: deps.Notifier,
-		now:      deps.Clock,
+		tasks:   deps.Tasks,
+		history: deps.History,
+		teams:   deps.Teams,
+		cache:   deps.Cache,
+		outbox:  deps.Outbox,
+		tx:      deps.Tx,
+		now:     deps.Clock,
 	}, nil
 }
 
@@ -92,38 +88,49 @@ func (s *TaskService) Create(ctx context.Context, userID int64, in port.CreateTa
 
 	var task *domain.Task
 	err := s.tx.WithinTx(ctx, func(ctx context.Context) error {
-		if _, err := requireMember(ctx, s.teams, in.TeamID, userID); err != nil {
-			return err
-		}
-		if in.AssigneeID != nil {
-			if err := requireAssignable(ctx, s.teams, in.TeamID, *in.AssigneeID); err != nil {
-				return err
-			}
-		}
-		id, err := s.tasks.Create(ctx, &domain.Task{
-			TeamID:      in.TeamID,
-			Title:       in.Title,
-			Description: in.Description,
-			Status:      domain.TaskStatusTodo,
-			Priority:    *in.Priority,
-			CreatorID:   userID,
-			AssigneeID:  in.AssigneeID,
-			DueDate:     in.DueDate,
-		})
-		if err != nil {
-			return err
-		}
-		// The row is read back for the timestamps the database assigned.
-		task, err = s.tasks.GetByID(ctx, id)
+		var err error
+		task, err = s.create(ctx, userID, in)
 		return err
 	})
 	if err != nil {
 		return nil, err
 	}
-
 	s.invalidateTeam(ctx, task.TeamID)
+	return task, nil
+}
+
+// create is the transactional part of Create.
+func (s *TaskService) create(ctx context.Context, userID int64, in port.CreateTaskInput) (*domain.Task, error) {
+	if _, err := requireMember(ctx, s.teams, in.TeamID, userID); err != nil {
+		return nil, err
+	}
+	if in.AssigneeID != nil {
+		if err := requireAssignable(ctx, s.teams, in.TeamID, *in.AssigneeID); err != nil {
+			return nil, err
+		}
+	}
+	id, err := s.tasks.Create(ctx, &domain.Task{
+		TeamID:      in.TeamID,
+		Title:       in.Title,
+		Description: in.Description,
+		Status:      domain.TaskStatusTodo,
+		Priority:    *in.Priority,
+		CreatorID:   userID,
+		AssigneeID:  in.AssigneeID,
+		DueDate:     in.DueDate,
+	})
+	if err != nil {
+		return nil, err
+	}
+	// The row is read back for the timestamps the database assigned.
+	task, err := s.tasks.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
 	if task.AssigneeID != nil {
-		s.notifyAssigned(ctx, task)
+		if err := s.recordAssignment(ctx, task, userID); err != nil {
+			return nil, err
+		}
 	}
 	return task, nil
 }
@@ -188,7 +195,7 @@ func (s *TaskService) update(ctx context.Context, userID, taskID int64, in port.
 	if len(changes) == 0 {
 		return current, false, nil
 	}
-	task, err := s.save(ctx, &updated, changes)
+	task, err := s.save(ctx, &updated, changes, userID)
 	if err != nil {
 		return nil, false, err
 	}
@@ -207,10 +214,12 @@ func (s *TaskService) lockTask(ctx context.Context, userID, taskID int64) (*doma
 	return task, nil
 }
 
-// save writes the updated task and the history of changes, and returns the task as stored.
-// A task can only be assigned to a member of its team.
-func (s *TaskService) save(ctx context.Context, task *domain.Task, changes []domain.TaskChange) (*domain.Task, error) {
-	if task.AssigneeID != nil && changesField(changes, fieldAssignee) {
+// save writes the updated task and the history of the changes userID made, and returns the
+// task as stored. A task can only be assigned to a member of its team; the new assignee, but
+// nobody whose assignment was merely cleared, is told about it.
+func (s *TaskService) save(ctx context.Context, task *domain.Task, changes []domain.TaskChange, userID int64) (*domain.Task, error) {
+	assigned := task.AssigneeID != nil && changesField(changes, fieldAssignee)
+	if assigned {
 		if err := requireAssignable(ctx, s.teams, task.TeamID, *task.AssigneeID); err != nil {
 			return nil, err
 		}
@@ -221,7 +230,28 @@ func (s *TaskService) save(ctx context.Context, task *domain.Task, changes []dom
 	if err := s.history.Add(ctx, changes); err != nil {
 		return nil, err
 	}
+	if assigned {
+		if err := s.recordAssignment(ctx, task, userID); err != nil {
+			return nil, err
+		}
+	}
 	return s.tasks.GetByID(ctx, task.ID)
+}
+
+// recordAssignment writes the task.assigned event of task, assigned by actorID, to the outbox
+// in the transaction carried by ctx.
+func (s *TaskService) recordAssignment(ctx context.Context, task *domain.Task, actorID int64) error {
+	event, err := taskAssignedEvent(domain.TaskAssigned{
+		TaskID:     task.ID,
+		TeamID:     task.TeamID,
+		Title:      task.Title,
+		AssigneeID: *task.AssigneeID,
+		ActorID:    actorID,
+	})
+	if err != nil {
+		return err
+	}
+	return s.outbox.Add(ctx, event)
 }
 
 func changesField(changes []domain.TaskChange, field string) bool {
@@ -348,18 +378,4 @@ func (s *TaskService) invalidateTeam(ctx context.Context, teamID int64) {
 func cacheFailed(ctx context.Context, operation string, teamID int64, err error) {
 	metrics.RecordCacheRequest(metrics.CacheTaskList, metrics.ResultError)
 	logger.FromContext(ctx).Warn("task list cache failed", "operation", operation, "team_id", teamID, "error", err)
-}
-
-// notifyAssigned tells the assignee of a newly created task about it. The task is already
-// committed, so failures are logged rather than returned.
-func (s *TaskService) notifyAssigned(ctx context.Context, task *domain.Task) {
-	log := logger.FromContext(ctx)
-	assignee, err := s.users.GetByID(ctx, *task.AssigneeID)
-	if err != nil {
-		log.Warn("load assignee for notification failed", "task_id", task.ID, "error", err)
-		return
-	}
-	if err := s.notifier.NotifyTaskAssigned(ctx, task, assignee); err != nil {
-		log.Warn("task assignment notification failed", "task_id", task.ID, "error", err)
-	}
 }

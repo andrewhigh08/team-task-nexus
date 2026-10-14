@@ -17,7 +17,7 @@ import (
 const testCommentID int64 = 21
 
 func (f *fixture) commentDeps() CommentDeps {
-	return CommentDeps{Comments: f.comments, Tasks: f.tasks, Teams: f.teams, Notifier: f.notifier}
+	return CommentDeps{Comments: f.comments, Tasks: f.tasks, Teams: f.teams, Outbox: f.outbox, Tx: f.tx}
 }
 
 func (f *fixture) commentService(t *testing.T) *CommentService {
@@ -48,7 +48,8 @@ func TestNewCommentService_RejectsMissingDeps(t *testing.T) {
 		{name: "comment repository", mutate: func(d *CommentDeps) { d.Comments = nil }, want: "comment repository is required"},
 		{name: "task repository", mutate: func(d *CommentDeps) { d.Tasks = nil }, want: "task repository is required"},
 		{name: "team repository", mutate: func(d *CommentDeps) { d.Teams = nil }, want: "team repository is required"},
-		{name: "notifier", mutate: func(d *CommentDeps) { d.Notifier = nil }, want: "notification service is required"},
+		{name: "outbox", mutate: func(d *CommentDeps) { d.Outbox = nil }, want: "outbox repository is required"},
+		{name: "transaction manager", mutate: func(d *CommentDeps) { d.Tx = nil }, want: "transaction manager is required"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -67,25 +68,35 @@ func TestNewCommentService_RejectsMissingDeps(t *testing.T) {
 func TestCommentService_Create(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name      string
-		notifyErr error
+		name     string
+		assignee *int64
+		event    string
 	}{
-		{name: "created and notified"},
-		{name: "a failed notification does not fail the comment", notifyErr: errors.New("mail server down")},
+		{
+			name:  "unassigned task",
+			event: `{"task_id": 11, "team_id": 7, "comment_id": 21, "author_id": 3, "task_creator_id": 1, "task_assignee_id": null}`,
+		},
+		{
+			name:     "assigned task",
+			assignee: new(adminUser),
+			event:    `{"task_id": 11, "team_id": 7, "comment_id": 21, "author_id": 3, "task_creator_id": 1, "task_assignee_id": 2}`,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			f := newFixture(t)
 			task := testTask()
+			task.AssigneeID = tt.assignee
 			stored := testComment()
-			f.tasks.EXPECT().GetByID(gomock.Any(), testTaskID).Return(task, nil)
-			f.expectRole(gomock.Any(), memberUser, domain.TeamRoleMember)
+			f.expectTx()
+			f.tasks.EXPECT().GetByID(inTx, testTaskID).Return(task, nil)
+			f.expectRole(inTx, memberUser, domain.TeamRoleMember)
 			gomock.InOrder(
-				f.comments.EXPECT().Create(gomock.Any(), &domain.Comment{TaskID: testTaskID, UserID: memberUser, Content: "Done for staging"}).
+				f.comments.EXPECT().Create(inTx, &domain.Comment{TaskID: testTaskID, UserID: memberUser, Content: "Done for staging"}).
 					Return(testCommentID, nil),
-				f.comments.EXPECT().GetByID(gomock.Any(), testCommentID).Return(stored, nil),
-				f.notifier.EXPECT().NotifyCommentAdded(gomock.Any(), stored, task).Return(tt.notifyErr),
+				f.comments.EXPECT().GetByID(inTx, testCommentID).Return(stored, nil),
+				f.expectEvent(t, domain.EventTaskCommented, tt.event),
 			)
 
 			comment, err := f.commentService(t).Create(t.Context(), memberUser, testTaskID, port.CreateCommentInput{Content: "  Done for staging\n"})
@@ -94,6 +105,24 @@ func TestCommentService_Create(t *testing.T) {
 			assert.Same(t, stored, comment)
 		})
 	}
+}
+
+func TestCommentService_Create_RollsBackWhenTheEventCannotBeStored(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	boom := apperror.Internal("add outbox events", errors.New("lock wait timeout exceeded"))
+	result := f.expectTx()
+	f.tasks.EXPECT().GetByID(inTx, testTaskID).Return(testTask(), nil)
+	f.expectRole(inTx, memberUser, domain.TeamRoleMember)
+	f.comments.EXPECT().Create(inTx, gomock.Any()).Return(testCommentID, nil)
+	f.comments.EXPECT().GetByID(inTx, testCommentID).Return(testComment(), nil)
+	f.outbox.EXPECT().Add(inTx, gomock.Any()).Return(boom)
+
+	comment, err := f.commentService(t).Create(t.Context(), memberUser, testTaskID, port.CreateCommentInput{Content: "hi"})
+
+	require.ErrorIs(t, err, boom)
+	require.ErrorIs(t, result.err, boom, "the comment must be rolled back with its event")
+	assert.Nil(t, comment)
 }
 
 func TestCommentService_Create_Rejections(t *testing.T) {
@@ -118,15 +147,17 @@ func TestCommentService_Create_Rejections(t *testing.T) {
 		{
 			name: "missing task", caller: memberUser, content: "hi",
 			setup: func(f *fixture) {
-				f.tasks.EXPECT().GetByID(gomock.Any(), testTaskID).Return(nil, apperror.NotFound("task", testTaskID))
+				f.expectTx()
+				f.tasks.EXPECT().GetByID(inTx, testTaskID).Return(nil, apperror.NotFound("task", testTaskID))
 			},
 			check: func(t *testing.T, err error) { requireNotFound(t, err, "task", testTaskID) },
 		},
 		{
 			name: "outsider gets the not found of a missing task", caller: outsiderUser, content: "hi",
 			setup: func(f *fixture) {
-				f.tasks.EXPECT().GetByID(gomock.Any(), testTaskID).Return(testTask(), nil)
-				f.expectRole(gomock.Any(), outsiderUser, "")
+				f.expectTx()
+				f.tasks.EXPECT().GetByID(inTx, testTaskID).Return(testTask(), nil)
+				f.expectRole(inTx, outsiderUser, "")
 			},
 			check: func(t *testing.T, err error) { requireNotFound(t, err, "task", testTaskID) },
 		},

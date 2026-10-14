@@ -190,17 +190,17 @@ func newServices(t *testing.T) services {
 	tasks := mysqlrepo.NewTaskRepo(testDB)
 	tx := mysqlrepo.NewTxManager(testDB)
 	cache := redisstore.NewTaskListCache(testRedis, time.Minute)
-	notifier := service.NewNotificationService()
+	outbox := mysqlrepo.NewOutboxRepo(testDB)
 
 	teamSvc, err := service.NewTeamService(service.TeamDeps{Teams: teams, Users: users, Tx: tx})
 	require.NoError(t, err)
 	taskSvc, err := service.NewTaskService(service.TaskDeps{
-		Tasks: tasks, History: mysqlrepo.NewTaskHistoryRepo(testDB), Teams: teams, Users: users,
-		Cache: cache, Tx: tx, Notifier: notifier,
+		Tasks: tasks, History: mysqlrepo.NewTaskHistoryRepo(testDB), Teams: teams,
+		Cache: cache, Outbox: outbox, Tx: tx,
 	})
 	require.NoError(t, err)
 	commentSvc, err := service.NewCommentService(service.CommentDeps{
-		Comments: mysqlrepo.NewCommentRepo(testDB), Tasks: tasks, Teams: teams, Notifier: notifier,
+		Comments: mysqlrepo.NewCommentRepo(testDB), Tasks: tasks, Teams: teams, Outbox: outbox, Tx: tx,
 	})
 	require.NoError(t, err)
 	return services{auth: newAuthService(t, users), teams: teamSvc, tasks: taskSvc, comments: commentSvc, cache: cache}
@@ -208,7 +208,7 @@ func newServices(t *testing.T) services {
 
 func cleanDB(t *testing.T) {
 	t.Helper()
-	tables := []string{"task_comments", "task_history", "tasks", "team_members", "teams", "users"}
+	tables := []string{"outbox", "task_comments", "task_history", "tasks", "team_members", "teams", "users"}
 	for _, table := range tables {
 		testDB.Exec("DELETE FROM " + table)
 	}

@@ -60,3 +60,18 @@ func TestRecordCacheRequest(t *testing.T) {
 		})
 	}
 }
+
+func TestRecordOutboxEvent(t *testing.T) {
+	t.Parallel()
+	for _, result := range []string{ResultSent, ResultRetry, ResultFailed} {
+		t.Run(result, func(t *testing.T) {
+			t.Parallel()
+			const eventType = "metrics.test"
+			before := testutil.ToFloat64(OutboxEvents.WithLabelValues(eventType, result))
+
+			RecordOutboxEvent(eventType, result)
+
+			assert.InDelta(t, before+1, testutil.ToFloat64(OutboxEvents.WithLabelValues(eventType, result)), 0)
+		})
+	}
+}
