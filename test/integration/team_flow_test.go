@@ -5,11 +5,11 @@ package integration
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/andrewhigh08/team-task-nexus/internal/adapter/mysqlrepo"
 	"github.com/andrewhigh08/team-task-nexus/internal/adapter/redisstore"
 	"github.com/andrewhigh08/team-task-nexus/internal/domain"
+	"github.com/andrewhigh08/team-task-nexus/internal/port"
 	"github.com/andrewhigh08/team-task-nexus/internal/service"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -28,19 +28,19 @@ func TestTeamFlow_Integration(t *testing.T) {
 	taskCache := redisstore.NewTaskCache(testRedis)
 	notifSvc := service.NewNotificationService()
 
-	authSvc := service.NewAuthService(userRepo, "test-secret", 24*time.Hour)
+	authSvc := newAuthService(t, userRepo)
 	teamSvc := service.NewTeamService(teamRepo, userRepo, txManager, notifSvc)
 	taskSvc := service.NewTaskService(taskRepo, teamRepo, userRepo, historyRepo, taskCache, txManager, notifSvc)
 	commentSvc := service.NewCommentService(commentRepo, taskRepo, teamRepo, notifSvc)
 
 	// Register two users
-	user1, err := authSvc.Register(ctx, domain.RegisterRequest{
+	user1, err := authSvc.Register(ctx, port.RegisterInput{
 		Email: "owner@test.com", Password: "password", FullName: "Owner User",
 	})
 	require.NoError(t, err)
 	require.NotEmpty(t, user1.Token)
 
-	user2, err := authSvc.Register(ctx, domain.RegisterRequest{
+	user2, err := authSvc.Register(ctx, port.RegisterInput{
 		Email: "member@test.com", Password: "password", FullName: "Member User",
 	})
 	require.NoError(t, err)

@@ -44,13 +44,3 @@ func (m *TaskCacheMock) InvalidateTeam(ctx context.Context, teamID int64) error 
 	args := m.Called(ctx, teamID)
 	return args.Error(0)
 }
-
-// RateLimiterMock
-type RateLimiterMock struct {
-	mock.Mock
-}
-
-func (m *RateLimiterMock) Allow(ctx context.Context, userID int64) (bool, error) {
-	args := m.Called(ctx, userID)
-	return args.Bool(0), args.Error(1)
-}

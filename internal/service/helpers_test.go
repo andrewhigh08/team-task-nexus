@@ -9,10 +9,11 @@ import (
 	"github.com/andrewhigh08/team-task-nexus/internal/pkg/apperror"
 )
 
-// assertAppError asserts that err is or wraps an AppError with the given code.
-func assertAppError(t *testing.T, err error, code string) {
+// assertAppError asserts that err is or wraps an AppError with the given code and returns it.
+func assertAppError(t *testing.T, err error, code string) *apperror.AppError {
 	t.Helper()
 	appErr, ok := apperror.AsAppError(err)
 	require.True(t, ok, "%v is not an AppError", err)
 	assert.Equal(t, code, appErr.Code)
+	return appErr
 }

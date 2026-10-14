@@ -62,7 +62,11 @@ func (a *App) init(ctx context.Context) error {
 	if err := a.openRedis(ctx); err != nil {
 		return err
 	}
-	a.router = a.newRouter()
+	router, err := a.newRouter()
+	if err != nil {
+		return err
+	}
+	a.router = router
 	a.srv = a.newServer()
 	return nil
 }

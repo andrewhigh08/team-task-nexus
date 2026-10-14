@@ -19,7 +19,7 @@ type RouterDeps struct {
 	TaskHandler    *handler.TaskHandler
 	CommentHandler *handler.CommentHandler
 	HealthHandler  *handler.HealthHandler
-	JWTSecret      string
+	TokenVerifier  port.TokenVerifier
 	RateLimiter    port.RateLimiter
 	Logger         *logger.Logger
 }
@@ -42,7 +42,7 @@ func NewRouter(deps RouterDeps) *chi.Mux {
 		r.Post("/login", deps.AuthHandler.Login)
 
 		r.Group(func(r chi.Router) {
-			r.Use(middleware.JWTAuth(deps.JWTSecret))
+			r.Use(middleware.Authenticate(deps.TokenVerifier))
 			r.Use(middleware.RateLimit(deps.RateLimiter))
 
 			r.Route("/teams", func(r chi.Router) {

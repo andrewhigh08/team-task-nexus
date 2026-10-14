@@ -16,6 +16,7 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/ilyakaznacheev/cleanenv"
 	"github.com/joho/godotenv"
+	"golang.org/x/crypto/bcrypt"
 )
 
 const (
@@ -43,6 +44,7 @@ type Config struct {
 	Database  DatabaseConfig
 	Redis     RedisConfig
 	JWT       JWTConfig
+	Password  PasswordConfig
 	RateLimit RateLimitConfig
 }
 
@@ -86,7 +88,14 @@ type RedisConfig struct {
 // JWTConfig configures access token signing.
 type JWTConfig struct {
 	Secret string        `env:"JWT_SECRET"`
+	Issuer string        `env:"JWT_ISSUER" env-default:"team-task-nexus"`
 	TTL    time.Duration `env:"JWT_TTL" env-default:"24h"`
+}
+
+// PasswordConfig configures password hashing. Each step of BcryptCost doubles the work of
+// hashing and checking a password.
+type PasswordConfig struct {
+	BcryptCost int `env:"BCRYPT_COST" env-default:"10"`
 }
 
 // RateLimitConfig configures the request rate limits.
@@ -121,6 +130,7 @@ func (c *Config) Validate() error {
 		c.Database.validate(),
 		c.Redis.validate(),
 		c.JWT.validate(),
+		c.Password.validate(),
 		c.RateLimit.validate(),
 	)...)
 }
@@ -174,7 +184,7 @@ func (c RedisConfig) validate() []error {
 
 // validate never echoes the secret, only its length.
 func (c JWTConfig) validate() []error {
-	var errs []error
+	errs := []error{required("JWT_ISSUER", c.Issuer)}
 	switch {
 	case c.Secret == "":
 		errs = append(errs, errors.New("JWT_SECRET is required"))
@@ -185,6 +195,13 @@ func (c JWTConfig) validate() []error {
 		errs = append(errs, fmt.Errorf("JWT_TTL must be between %s and %s, got %s", minJWTTTL, maxJWTTTL, c.TTL))
 	}
 	return errs
+}
+
+func (c PasswordConfig) validate() []error {
+	if c.BcryptCost < bcrypt.MinCost || c.BcryptCost > bcrypt.MaxCost {
+		return []error{fmt.Errorf("BCRYPT_COST must be between %d and %d, got %d", bcrypt.MinCost, bcrypt.MaxCost, c.BcryptCost)}
+	}
+	return nil
 }
 
 func (c RateLimitConfig) validate() []error {

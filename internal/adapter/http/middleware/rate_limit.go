@@ -16,8 +16,8 @@ const retryAfterSeconds = 60
 func RateLimit(limiter port.RateLimiter) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			userID := GetUserID(r.Context())
-			if userID == 0 {
+			userID, ok := UserIDFrom(r.Context())
+			if !ok {
 				next.ServeHTTP(w, r)
 				return
 			}

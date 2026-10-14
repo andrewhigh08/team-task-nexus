@@ -78,7 +78,8 @@ func validConfig() Config {
 			MaxOpenConns: 25, MaxIdleConns: 10, ConnMaxLifetime: 5 * time.Minute, ConnectTimeout: 30 * time.Second,
 		},
 		Redis:     RedisConfig{Addr: "localhost:6379"},
-		JWT:       JWTConfig{Secret: testSecret, TTL: 24 * time.Hour},
+		JWT:       JWTConfig{Secret: testSecret, Issuer: "team-task-nexus", TTL: 24 * time.Hour},
+		Password:  PasswordConfig{BcryptCost: 10},
 		RateLimit: RateLimitConfig{APIPerMinute: 100},
 	}
 }
@@ -102,8 +103,8 @@ func TestLoad_EnvironmentOverridesEveryDefault(t *testing.T) {
 		"DB_HOST": "db.internal", "DB_PORT": "3307", "DB_USER": "svc", "DB_PASSWORD": "pw", "DB_NAME": "nexus",
 		"DB_MAX_OPEN_CONNS": "50", "DB_MAX_IDLE_CONNS": "50", "DB_CONN_MAX_LIFETIME": "1h", "DB_CONNECT_TIMEOUT": "90s",
 		"REDIS_ADDR": "cache.internal:6380", "REDIS_PASSWORD": "rpw", "REDIS_DB": "3",
-		"JWT_SECRET": strings.Repeat("s", 64), "JWT_TTL": "15m",
-		"RATE_LIMIT_API_PER_MINUTE": "600",
+		"JWT_SECRET": strings.Repeat("s", 64), "JWT_ISSUER": "nexus-staging", "JWT_TTL": "15m",
+		"BCRYPT_COST": "12", "RATE_LIMIT_API_PER_MINUTE": "600",
 	}
 	assert.ElementsMatch(t, envNames(reflect.TypeFor[Config]()), slices.Collect(maps.Keys(overrides)),
 		"every variable the configuration reads must be overridden by this test")
@@ -123,7 +124,8 @@ func TestLoad_EnvironmentOverridesEveryDefault(t *testing.T) {
 			MaxOpenConns: 50, MaxIdleConns: 50, ConnMaxLifetime: time.Hour, ConnectTimeout: 90 * time.Second,
 		},
 		Redis:     RedisConfig{Addr: "cache.internal:6380", Password: "rpw", DB: 3},
-		JWT:       JWTConfig{Secret: strings.Repeat("s", 64), TTL: 15 * time.Minute},
+		JWT:       JWTConfig{Secret: strings.Repeat("s", 64), Issuer: "nexus-staging", TTL: 15 * time.Minute},
+		Password:  PasswordConfig{BcryptCost: 12},
 		RateLimit: RateLimitConfig{APIPerMinute: 600},
 	}
 	assert.Equal(t, want, *cfg)
@@ -165,6 +167,7 @@ func TestLoad_RejectsUnparsableValues(t *testing.T) {
 		{name: "port", key: "SERVER_PORT", value: "http"},
 		{name: "integer", key: "DB_MAX_OPEN_CONNS", value: "many"},
 		{name: "rate", key: "RATE_LIMIT_API_PER_MINUTE", value: "1.5"},
+		{name: "bcrypt cost", key: "BCRYPT_COST", value: "ten"},
 	}
 
 	for _, tt := range tests {
@@ -241,6 +244,12 @@ func TestValidate(t *testing.T) {
 		{name: "longest jwt ttl", mutate: func(c *Config) { c.JWT.TTL = 720 * time.Hour }},
 		{name: "jwt ttl too short", mutate: func(c *Config) { c.JWT.TTL = 59 * time.Second }, wantErr: "JWT_TTL"},
 		{name: "jwt ttl too long", mutate: func(c *Config) { c.JWT.TTL = 721 * time.Hour }, wantErr: "JWT_TTL"},
+		{name: "empty jwt issuer", mutate: func(c *Config) { c.JWT.Issuer = "" }, wantErr: "JWT_ISSUER"},
+
+		{name: "lowest bcrypt cost", mutate: func(c *Config) { c.Password.BcryptCost = 4 }},
+		{name: "highest bcrypt cost", mutate: func(c *Config) { c.Password.BcryptCost = 31 }},
+		{name: "bcrypt cost below range", mutate: func(c *Config) { c.Password.BcryptCost = 3 }, wantErr: "BCRYPT_COST must be between 4 and 31, got 3"},
+		{name: "bcrypt cost above range", mutate: func(c *Config) { c.Password.BcryptCost = 32 }, wantErr: "BCRYPT_COST"},
 
 		{name: "one request per minute", mutate: func(c *Config) { c.RateLimit.APIPerMinute = 1 }},
 		{name: "zero requests per minute", mutate: func(c *Config) { c.RateLimit.APIPerMinute = 0 }, wantErr: "RATE_LIMIT_API_PER_MINUTE"},
@@ -285,7 +294,7 @@ func TestValidate_ReportsEveryProblem(t *testing.T) {
 		"SERVER_PORT", "SERVER_READ_HEADER_TIMEOUT", "SERVER_READ_TIMEOUT", "SERVER_WRITE_TIMEOUT", "SERVER_IDLE_TIMEOUT",
 		"SERVER_SHUTDOWN_TIMEOUT", "LOG_LEVEL", "LOG_FORMAT", "DB_HOST", "DB_PORT", "DB_USER", "DB_NAME",
 		"DB_MAX_OPEN_CONNS", "DB_MAX_IDLE_CONNS", "DB_CONN_MAX_LIFETIME", "DB_CONNECT_TIMEOUT", "REDIS_ADDR", "REDIS_DB",
-		"JWT_SECRET", "JWT_TTL", "RATE_LIMIT_API_PER_MINUTE",
+		"JWT_SECRET", "JWT_ISSUER", "JWT_TTL", "BCRYPT_COST", "RATE_LIMIT_API_PER_MINUTE",
 	} {
 		assert.Contains(t, err.Error(), name)
 	}

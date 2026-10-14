@@ -15,6 +15,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/bcrypt"
 
 	"github.com/andrewhigh08/team-task-nexus/internal/config"
 	"github.com/andrewhigh08/team-task-nexus/internal/pkg/logger"
@@ -74,7 +75,8 @@ func testConfig(t *testing.T, connectTimeout time.Duration) *config.Config {
 			MaxOpenConns: 2, MaxIdleConns: 1, ConnMaxLifetime: time.Minute, ConnectTimeout: connectTimeout,
 		},
 		Redis:     config.RedisConfig{Addr: net.JoinHostPort("127.0.0.1", strconv.Itoa(closedPort(t)))},
-		JWT:       config.JWTConfig{Secret: strings.Repeat("k", 32), TTL: time.Hour},
+		JWT:       config.JWTConfig{Secret: strings.Repeat("k", 32), Issuer: "team-task-nexus", TTL: time.Hour},
+		Password:  config.PasswordConfig{BcryptCost: bcrypt.MinCost},
 		RateLimit: config.RateLimitConfig{APIPerMinute: 100},
 	}
 	require.NoError(t, cfg.Validate())

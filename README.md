@@ -110,7 +110,8 @@ make docker-up
 ### Локально
 
 Требуется запущенный MySQL и Redis. Конфигурация читается из переменных окружения
-(`SERVER_*`, `LOG_*`, `DB_*`, `REDIS_*`, `JWT_SECRET`, `JWT_TTL`, `RATE_LIMIT_API_PER_MINUTE`);
+(`SERVER_*`, `LOG_*`, `DB_*`, `REDIS_*`, `JWT_SECRET`, `JWT_ISSUER`, `JWT_TTL`, `BCRYPT_COST`,
+`RATE_LIMIT_API_PER_MINUTE`);
 файл `.env` в рабочем каталоге подхватывается, если есть, но не перекрывает уже заданные переменные.
 Обязателен только `JWT_SECRET` (не короче 32 байт), остальное имеет значения по умолчанию.
 Миграции применяются при старте.

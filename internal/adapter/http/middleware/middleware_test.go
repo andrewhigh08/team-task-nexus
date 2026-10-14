@@ -2,28 +2,23 @@ package middleware_test
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 
 	"github.com/andrewhigh08/team-task-nexus/internal/adapter/http/middleware"
 	"github.com/andrewhigh08/team-task-nexus/internal/adapter/http/response"
 	"github.com/andrewhigh08/team-task-nexus/internal/pkg/logger"
 	"github.com/andrewhigh08/team-task-nexus/test/mocks"
 )
-
-const testSecret = "0123456789abcdef0123456789abcdef"
 
 func logRecords(t *testing.T, buf *bytes.Buffer) []map[string]any {
 	t.Helper()
@@ -34,13 +29,6 @@ func logRecords(t *testing.T, buf *bytes.Buffer) []map[string]any {
 		records = append(records, rec)
 	}
 	return records
-}
-
-func signedToken(t *testing.T, secret string, claims jwt.MapClaims) string {
-	t.Helper()
-	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(secret))
-	require.NoError(t, err)
-	return token
 }
 
 func TestLogging(t *testing.T) {
@@ -93,62 +81,6 @@ func TestLogging(t *testing.T) {
 	}
 }
 
-func TestJWTAuth(t *testing.T) {
-	t.Parallel()
-	valid := signedToken(t, testSecret, jwt.MapClaims{"user_id": 7, "exp": time.Now().Add(time.Hour).Unix()})
-	tests := []struct {
-		name       string
-		header     string
-		wantStatus int
-		wantUserID int64
-	}{
-		{name: "valid token", header: "Bearer " + valid, wantStatus: http.StatusNoContent, wantUserID: 7},
-		{name: "missing header", header: "", wantStatus: http.StatusUnauthorized},
-		{name: "wrong scheme", header: "Basic " + valid, wantStatus: http.StatusUnauthorized},
-		{
-			name:       "foreign signature",
-			header:     "Bearer " + signedToken(t, strings.Repeat("x", 32), jwt.MapClaims{"user_id": 7}),
-			wantStatus: http.StatusUnauthorized,
-		},
-		{
-			name:       "expired token",
-			header:     "Bearer " + signedToken(t, testSecret, jwt.MapClaims{"user_id": 7, "exp": time.Now().Add(-time.Hour).Unix()}),
-			wantStatus: http.StatusUnauthorized,
-		},
-		{
-			name:       "token without a user",
-			header:     "Bearer " + signedToken(t, testSecret, jwt.MapClaims{"exp": time.Now().Add(time.Hour).Unix()}),
-			wantStatus: http.StatusUnauthorized,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			var gotUserID, gotLogUserID int64
-			next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				gotUserID = middleware.GetUserID(r.Context())
-				gotLogUserID = logger.UserIDFromContext(r.Context())
-				w.WriteHeader(http.StatusNoContent)
-			})
-			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/teams", http.NoBody)
-			if tt.header != "" {
-				req.Header.Set("Authorization", tt.header)
-			}
-			rec := httptest.NewRecorder()
-
-			middleware.JWTAuth(testSecret)(next).ServeHTTP(rec, req)
-
-			assert.Equal(t, tt.wantStatus, rec.Code)
-			assert.Equal(t, tt.wantUserID, gotUserID)
-			assert.Equal(t, tt.wantUserID, gotLogUserID, "the user id reaches the request logger")
-			if tt.wantStatus == http.StatusUnauthorized {
-				assert.JSONEq(t, `{"success":false,"error":{"code":"UNAUTHORIZED","message":"authentication required"}}`, rec.Body.String())
-			}
-		})
-	}
-}
-
 func TestRateLimit(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -171,14 +103,12 @@ func TestRateLimit(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			limiter := new(mocks.RateLimiterMock)
-			if tt.userID != 0 {
-				limiter.On("Allow", mock.Anything, tt.userID).Return(tt.allowed, tt.limiterErr).Once()
-			}
+			limiter := mocks.NewMockRateLimiter(gomock.NewController(t))
 			next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 			ctx := t.Context()
 			if tt.userID != 0 {
-				ctx = context.WithValue(ctx, middleware.UserIDKey, tt.userID)
+				ctx = middleware.WithUserID(ctx, tt.userID)
+				limiter.EXPECT().Allow(gomock.Any(), tt.userID).Return(tt.allowed, tt.limiterErr)
 			}
 			req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/api/v1/tasks", http.NoBody)
 			rec := httptest.NewRecorder()
@@ -189,7 +119,6 @@ func TestRateLimit(t *testing.T) {
 			if tt.wantBody != "" {
 				assert.JSONEq(t, tt.wantBody, rec.Body.String())
 			}
-			limiter.AssertExpectations(t)
 		})
 	}
 }

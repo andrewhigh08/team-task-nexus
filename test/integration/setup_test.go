@@ -17,9 +17,13 @@ import (
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 	"github.com/jmoiron/sqlx"
 	goredis "github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
+	"golang.org/x/crypto/bcrypt"
 
+	"github.com/andrewhigh08/team-task-nexus/internal/port"
+	"github.com/andrewhigh08/team-task-nexus/internal/service"
 	"github.com/andrewhigh08/team-task-nexus/migrations"
 )
 
@@ -154,6 +158,18 @@ func setupRedis(ctx context.Context) (testcontainers.Container, *goredis.Client,
 	}
 
 	return container, rdb, nil
+}
+
+func newAuthService(t *testing.T, users port.UserRepository) *service.AuthService {
+	t.Helper()
+	svc, err := service.NewAuthService(users, service.AuthConfig{
+		Secret:     []byte("integration-test-secret-0123456789"),
+		Issuer:     "team-task-nexus",
+		TTL:        time.Hour,
+		BcryptCost: bcrypt.MinCost,
+	})
+	require.NoError(t, err)
+	return svc
 }
 
 func cleanDB(t *testing.T) {

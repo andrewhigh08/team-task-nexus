@@ -7,7 +7,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/andrewhigh08/team-task-nexus/internal/adapter/http/middleware"
 	"github.com/andrewhigh08/team-task-nexus/internal/adapter/http/response"
 	"github.com/andrewhigh08/team-task-nexus/internal/domain"
 	"github.com/andrewhigh08/team-task-nexus/internal/pkg/apperror"
@@ -26,7 +25,10 @@ func NewTeamHandler(teamSvc port.TeamService) *TeamHandler {
 
 // Create adds a team owned by the caller.
 func (h *TeamHandler) Create(w http.ResponseWriter, r *http.Request) {
-	userID := middleware.GetUserID(r.Context())
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
 
 	var req domain.CreateTeamRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -45,7 +47,10 @@ func (h *TeamHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 // List returns the caller's teams.
 func (h *TeamHandler) List(w http.ResponseWriter, r *http.Request) {
-	userID := middleware.GetUserID(r.Context())
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
 
 	teams, err := h.teamSvc.ListByUserID(r.Context(), userID)
 	if err != nil {
@@ -58,7 +63,10 @@ func (h *TeamHandler) List(w http.ResponseWriter, r *http.Request) {
 
 // GetByID returns the team in the path.
 func (h *TeamHandler) GetByID(w http.ResponseWriter, r *http.Request) {
-	userID := middleware.GetUserID(r.Context())
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
 	teamID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
 		response.Error(w, r, apperror.BadRequest("invalid team id"))
@@ -76,7 +84,10 @@ func (h *TeamHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 
 // Invite adds a registered user to the team in the path.
 func (h *TeamHandler) Invite(w http.ResponseWriter, r *http.Request) {
-	userID := middleware.GetUserID(r.Context())
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
 	teamID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
 		response.Error(w, r, apperror.BadRequest("invalid team id"))
@@ -99,7 +110,10 @@ func (h *TeamHandler) Invite(w http.ResponseWriter, r *http.Request) {
 
 // GetStats returns statistics for the caller's teams.
 func (h *TeamHandler) GetStats(w http.ResponseWriter, r *http.Request) {
-	userID := middleware.GetUserID(r.Context())
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
 
 	stats, err := h.teamSvc.GetStats(r.Context(), userID)
 	if err != nil {
@@ -112,7 +126,10 @@ func (h *TeamHandler) GetStats(w http.ResponseWriter, r *http.Request) {
 
 // GetTopContributors returns the most active members of the team in the path.
 func (h *TeamHandler) GetTopContributors(w http.ResponseWriter, r *http.Request) {
-	userID := middleware.GetUserID(r.Context())
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
 	teamID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
 		response.Error(w, r, apperror.BadRequest("invalid team id"))

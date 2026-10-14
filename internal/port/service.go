@@ -2,13 +2,40 @@ package port
 
 import (
 	"context"
+	"time"
 
 	"github.com/andrewhigh08/team-task-nexus/internal/domain"
 )
 
+// RegisterInput is what a new account is created from. The service validates and normalizes it.
+type RegisterInput struct {
+	Email    string
+	Password string
+	FullName string
+}
+
+// LoginInput holds the credentials of a login attempt.
+type LoginInput struct {
+	Email    string
+	Password string
+}
+
+// AuthResult is the outcome of a successful registration or login: a signed access token,
+// the instant it expires and the account it was issued for.
+type AuthResult struct {
+	Token     string
+	ExpiresAt time.Time
+	User      domain.User
+}
+
+// AuthService registers accounts and exchanges credentials for access tokens.
 type AuthService interface {
-	Register(ctx context.Context, req domain.RegisterRequest) (*domain.AuthResponse, error)
-	Login(ctx context.Context, req domain.LoginRequest) (*domain.AuthResponse, error)
+	// Register creates an account and issues a token for it. Invalid input fails with an
+	// apperror VALIDATION_ERROR naming the fields, a taken email with CONFLICT.
+	Register(ctx context.Context, in RegisterInput) (*AuthResult, error)
+	// Login issues a token for valid credentials. An unknown email and a wrong password fail
+	// with the same apperror UNAUTHORIZED.
+	Login(ctx context.Context, in LoginInput) (*AuthResult, error)
 }
 
 type TeamService interface {

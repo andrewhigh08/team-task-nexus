@@ -5,11 +5,11 @@ package integration
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/andrewhigh08/team-task-nexus/internal/adapter/mysqlrepo"
 	"github.com/andrewhigh08/team-task-nexus/internal/adapter/redisstore"
 	"github.com/andrewhigh08/team-task-nexus/internal/domain"
+	"github.com/andrewhigh08/team-task-nexus/internal/port"
 	"github.com/andrewhigh08/team-task-nexus/internal/service"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -27,12 +27,12 @@ func TestTaskCaching_Integration(t *testing.T) {
 	taskCache := redisstore.NewTaskCache(testRedis)
 	notifSvc := service.NewNotificationService()
 
-	authSvc := service.NewAuthService(userRepo, "test-secret", 24*time.Hour)
+	authSvc := newAuthService(t, userRepo)
 	teamSvc := service.NewTeamService(teamRepo, userRepo, txManager, notifSvc)
 	taskSvc := service.NewTaskService(taskRepo, teamRepo, userRepo, historyRepo, taskCache, txManager, notifSvc)
 
 	// Setup
-	user, err := authSvc.Register(ctx, domain.RegisterRequest{
+	user, err := authSvc.Register(ctx, port.RegisterInput{
 		Email: "cache-test@test.com", Password: "password", FullName: "Cache User",
 	})
 	require.NoError(t, err)
@@ -82,11 +82,11 @@ func TestTaskPagination_Integration(t *testing.T) {
 	taskCache := redisstore.NewTaskCache(testRedis)
 	notifSvc := service.NewNotificationService()
 
-	authSvc := service.NewAuthService(userRepo, "test-secret", 24*time.Hour)
+	authSvc := newAuthService(t, userRepo)
 	teamSvc := service.NewTeamService(teamRepo, userRepo, txManager, notifSvc)
 	taskSvc := service.NewTaskService(taskRepo, teamRepo, userRepo, historyRepo, taskCache, txManager, notifSvc)
 
-	user, err := authSvc.Register(ctx, domain.RegisterRequest{
+	user, err := authSvc.Register(ctx, port.RegisterInput{
 		Email: "paging@test.com", Password: "password", FullName: "Paging User",
 	})
 	require.NoError(t, err)
@@ -133,11 +133,11 @@ func TestOrphanedAssignees_Integration(t *testing.T) {
 	taskCache := redisstore.NewTaskCache(testRedis)
 	notifSvc := service.NewNotificationService()
 
-	authSvc := service.NewAuthService(userRepo, "test-secret", 24*time.Hour)
+	authSvc := newAuthService(t, userRepo)
 	teamSvc := service.NewTeamService(teamRepo, userRepo, txManager, notifSvc)
 	taskSvc := service.NewTaskService(taskRepo, teamRepo, userRepo, historyRepo, taskCache, txManager, notifSvc)
 
-	user1, err := authSvc.Register(ctx, domain.RegisterRequest{
+	user1, err := authSvc.Register(ctx, port.RegisterInput{
 		Email: "orphan-owner@test.com", Password: "password", FullName: "Owner",
 	})
 	require.NoError(t, err)

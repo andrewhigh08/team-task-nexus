@@ -7,7 +7,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/andrewhigh08/team-task-nexus/internal/adapter/http/middleware"
 	"github.com/andrewhigh08/team-task-nexus/internal/adapter/http/response"
 	"github.com/andrewhigh08/team-task-nexus/internal/domain"
 	"github.com/andrewhigh08/team-task-nexus/internal/pkg/apperror"
@@ -26,7 +25,10 @@ func NewTaskHandler(taskSvc port.TaskService) *TaskHandler {
 
 // Create adds a task to a team.
 func (h *TaskHandler) Create(w http.ResponseWriter, r *http.Request) {
-	userID := middleware.GetUserID(r.Context())
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
 
 	var req domain.CreateTaskRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -45,7 +47,10 @@ func (h *TaskHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 // List returns one page of tasks matching the query parameters.
 func (h *TaskHandler) List(w http.ResponseWriter, r *http.Request) {
-	userID := middleware.GetUserID(r.Context())
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
 
 	filter := domain.TaskFilter{
 		Page:     1,
@@ -87,7 +92,10 @@ func (h *TaskHandler) List(w http.ResponseWriter, r *http.Request) {
 
 // Update changes the task in the path.
 func (h *TaskHandler) Update(w http.ResponseWriter, r *http.Request) {
-	userID := middleware.GetUserID(r.Context())
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
 	taskID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
 		response.Error(w, r, apperror.BadRequest("invalid task id"))
@@ -111,7 +119,10 @@ func (h *TaskHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 // GetHistory returns the change history of the task in the path.
 func (h *TaskHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
-	userID := middleware.GetUserID(r.Context())
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
 	taskID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
 		response.Error(w, r, apperror.BadRequest("invalid task id"))

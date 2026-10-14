@@ -14,6 +14,7 @@ require (
 	github.com/redis/go-redis/v9 v9.23.0
 	github.com/stretchr/testify v1.12.1
 	github.com/testcontainers/testcontainers-go v0.40.0
+	go.uber.org/mock v0.6.0
 	golang.org/x/crypto v0.58.0
 )
 

@@ -1,3 +1,5 @@
+// Package port defines the interfaces between the layers: the repositories, caches and token
+// verifier the services depend on, and the services the HTTP handlers call.
 package port
 
 import (
@@ -6,9 +8,13 @@ import (
 	"github.com/andrewhigh08/team-task-nexus/internal/domain"
 )
 
+// UserRepository stores users. Lookups of a missing user fail with an apperror NOT_FOUND, so
+// callers can tell an unknown user apart from a failing database.
 type UserRepository interface {
+	// Create inserts user and returns its id; a taken email fails with an apperror CONFLICT.
 	Create(ctx context.Context, user *domain.User) (int64, error)
 	GetByID(ctx context.Context, id int64) (*domain.User, error)
+	// GetByEmail finds the user with the normalized email.
 	GetByEmail(ctx context.Context, email string) (*domain.User, error)
 }
 

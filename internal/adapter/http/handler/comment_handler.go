@@ -7,7 +7,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/andrewhigh08/team-task-nexus/internal/adapter/http/middleware"
 	"github.com/andrewhigh08/team-task-nexus/internal/adapter/http/response"
 	"github.com/andrewhigh08/team-task-nexus/internal/domain"
 	"github.com/andrewhigh08/team-task-nexus/internal/pkg/apperror"
@@ -26,7 +25,10 @@ func NewCommentHandler(commentSvc port.CommentService) *CommentHandler {
 
 // Create adds a comment to the task in the path.
 func (h *CommentHandler) Create(w http.ResponseWriter, r *http.Request) {
-	userID := middleware.GetUserID(r.Context())
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
 	taskID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
 		response.Error(w, r, apperror.BadRequest("invalid task id"))
@@ -50,7 +52,10 @@ func (h *CommentHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 // List returns the comments of the task in the path.
 func (h *CommentHandler) List(w http.ResponseWriter, r *http.Request) {
-	userID := middleware.GetUserID(r.Context())
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
 	taskID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
 		response.Error(w, r, apperror.BadRequest("invalid task id"))
