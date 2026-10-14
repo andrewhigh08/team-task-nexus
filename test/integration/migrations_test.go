@@ -2,6 +2,7 @@ package integration
 
 import (
 	"testing"
+	"time"
 
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/jmoiron/sqlx"
@@ -10,7 +11,7 @@ import (
 )
 
 // latestMigration is the version of the newest file in migrations/.
-const latestMigration = 8
+const latestMigration = 9
 
 // appTables are the tables the migrations create.
 var appTables = []string{"outbox", "task_comments", "task_history", "tasks", "team_members", "teams", "users"}
@@ -35,6 +36,39 @@ func TestMigrationsRollBackAndReapplyCleanly(t *testing.T) {
 	require.NoError(t, m.Up())
 	assertVersion(t, m, latestMigration)
 	assert.Equal(t, appTables, tables(t, db))
+}
+
+func TestEmailCollationMigrationLowerCasesStoredEmails(t *testing.T) {
+	t.Parallel()
+	cfg := scratchDatabase(t)
+	db := openDB(t, cfg)
+	m := newMigrator(t, cfg)
+	// Migration 000009 changes the collation of users.email.
+	require.NoError(t, m.Migrate(8))
+
+	// The first release stored emails as typed.
+	edited := time.Date(2025, time.March, 1, 12, 0, 0, 0, time.UTC)
+	_, err := db.ExecContext(t.Context(), `
+		INSERT INTO users (email, password_hash, full_name, updated_at)
+		VALUES ('Mixed.Case@Example.com', 'hash', 'Mixed', ?), ('lower@example.com', 'hash', 'Lower', ?)`,
+		edited, edited)
+	require.NoError(t, err)
+
+	require.NoError(t, m.Up())
+	type userRow struct {
+		Email     string    `db:"email"`
+		UpdatedAt time.Time `db:"updated_at"`
+	}
+	var users []userRow
+	require.NoError(t, db.SelectContext(t.Context(), &users, "SELECT email, updated_at FROM users ORDER BY id"))
+	assert.Equal(t, []userRow{
+		{Email: "mixed.case@example.com", UpdatedAt: edited},
+		{Email: "lower@example.com", UpdatedAt: edited},
+	}, users, "the repair is not an edit")
+
+	var matches int
+	require.NoError(t, db.GetContext(t.Context(), &matches, "SELECT COUNT(*) FROM users WHERE email = 'Mixed.Case@Example.com'"))
+	assert.Zero(t, matches, "emails are compared byte for byte")
 }
 
 func assertVersion(t *testing.T, m *migrate.Migrate, want uint) {

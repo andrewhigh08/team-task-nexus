@@ -47,6 +47,45 @@ func TestRegisterAndLogin(t *testing.T) {
 	assert.Equal(t, "user with this email already exists", duplicate.Message)
 }
 
+// TestLookalikeEmailsAreDistinctAccounts covers addresses that a collation ignoring accents,
+// character width or ß against ss would take for one address.
+func TestLookalikeEmailsAreDistinctAccounts(t *testing.T) {
+	t.Parallel()
+	c := newClient(t)
+	owner := c.mustRegister(t, "Lookalike Owner")
+
+	tests := []struct {
+		name      string
+		plain     string
+		lookalike string
+	}{
+		{name: "accent", plain: "rene", lookalike: "rené"},
+		{name: "sharp s", plain: "strasse", lookalike: "straße"},
+		{name: "full-width letter", plain: "alice", lookalike: "ａlice"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			suffix := "-" + uniqueEmail(t)
+			plain := expect[authData](t, c.register(t, tc.plain+suffix, password, "Plain"), http.StatusCreated)
+			lookalike := expect[authData](t, c.register(t, tc.lookalike+suffix, password, "Lookalike"), http.StatusCreated)
+			assert.NotEqual(t, plain.User.ID, lookalike.User.ID)
+			assert.Equal(t, tc.lookalike+suffix, lookalike.User.Email)
+
+			// Each address logs in to its own account.
+			for _, registered := range []authData{plain, lookalike} {
+				loggedIn := expect[authData](t, c.login(t, registered.User.Email, password), http.StatusOK)
+				assert.Equal(t, registered.User, loggedIn.User)
+			}
+
+			// Adding the lookalike address to a team adds its account, not the plain one.
+			team := c.mustCreateTeam(t, owner, "Lookalikes "+tc.name)
+			member := expect[memberData](t, c.addMember(t, owner, team.ID, lookalike.User.Email, ""), http.StatusCreated)
+			assert.Equal(t, lookalike.User.ID, member.UserID)
+		})
+	}
+}
+
 func TestRegisterValidatesInput(t *testing.T) {
 	t.Parallel()
 	c := newClient(t)
