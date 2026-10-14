@@ -78,6 +78,7 @@ func testConfig(t *testing.T, connectTimeout time.Duration) *config.Config {
 		JWT:       config.JWTConfig{Secret: strings.Repeat("k", 32), Issuer: "team-task-nexus", TTL: time.Hour},
 		Password:  config.PasswordConfig{BcryptCost: bcrypt.MinCost},
 		RateLimit: config.RateLimitConfig{APIPerMinute: 100, AuthPerMinute: 10},
+		Cache:     config.CacheConfig{TaskListTTL: time.Minute},
 	}
 	require.NoError(t, cfg.Validate())
 	return cfg

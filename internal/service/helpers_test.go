@@ -79,7 +79,7 @@ type fixture struct {
 	tasks    *mocks.MockTaskRepository
 	history  *mocks.MockTaskHistoryRepository
 	comments *mocks.MockCommentRepository
-	cache    *mocks.MockTaskCache
+	cache    *mocks.MockTaskListCache
 	tx       *mocks.MockTxManager
 	notifier *mocks.MockNotificationService
 }
@@ -93,7 +93,7 @@ func newFixture(t *testing.T) *fixture {
 		tasks:    mocks.NewMockTaskRepository(ctrl),
 		history:  mocks.NewMockTaskHistoryRepository(ctrl),
 		comments: mocks.NewMockCommentRepository(ctrl),
-		cache:    mocks.NewMockTaskCache(ctrl),
+		cache:    mocks.NewMockTaskListCache(ctrl),
 		tx:       mocks.NewMockTxManager(ctrl),
 		notifier: mocks.NewMockNotificationService(ctrl),
 	}

@@ -17,69 +17,85 @@ import (
 	gomock "go.uber.org/mock/gomock"
 )
 
-// MockTaskCache is a mock of TaskCache interface.
-type MockTaskCache struct {
+// MockTaskListCache is a mock of TaskListCache interface.
+type MockTaskListCache struct {
 	ctrl     *gomock.Controller
-	recorder *MockTaskCacheMockRecorder
+	recorder *MockTaskListCacheMockRecorder
 	isgomock struct{}
 }
 
-// MockTaskCacheMockRecorder is the mock recorder for MockTaskCache.
-type MockTaskCacheMockRecorder struct {
-	mock *MockTaskCache
+// MockTaskListCacheMockRecorder is the mock recorder for MockTaskListCache.
+type MockTaskListCacheMockRecorder struct {
+	mock *MockTaskListCache
 }
 
-// NewMockTaskCache creates a new mock instance.
-func NewMockTaskCache(ctrl *gomock.Controller) *MockTaskCache {
-	mock := &MockTaskCache{ctrl: ctrl}
-	mock.recorder = &MockTaskCacheMockRecorder{mock}
+// NewMockTaskListCache creates a new mock instance.
+func NewMockTaskListCache(ctrl *gomock.Controller) *MockTaskListCache {
+	mock := &MockTaskListCache{ctrl: ctrl}
+	mock.recorder = &MockTaskListCacheMockRecorder{mock}
 	return mock
 }
 
 // EXPECT returns an object that allows the caller to indicate expected use.
-func (m *MockTaskCache) EXPECT() *MockTaskCacheMockRecorder {
+func (m *MockTaskListCache) EXPECT() *MockTaskListCacheMockRecorder {
 	return m.recorder
 }
 
-// GetTaskList mocks base method.
-func (m *MockTaskCache) GetTaskList(ctx context.Context, q domain.TaskQuery) (*domain.TaskPage, error) {
+// Get mocks base method.
+func (m *MockTaskListCache) Get(ctx context.Context, teamID, ver int64, q domain.TaskQuery) (*domain.TaskPage, bool, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetTaskList", ctx, q)
+	ret := m.ctrl.Call(m, "Get", ctx, teamID, ver, q)
 	ret0, _ := ret[0].(*domain.TaskPage)
+	ret1, _ := ret[1].(bool)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
+}
+
+// Get indicates an expected call of Get.
+func (mr *MockTaskListCacheMockRecorder) Get(ctx, teamID, ver, q any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Get", reflect.TypeOf((*MockTaskListCache)(nil).Get), ctx, teamID, ver, q)
+}
+
+// Invalidate mocks base method.
+func (m *MockTaskListCache) Invalidate(ctx context.Context, teamID int64) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Invalidate", ctx, teamID)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// Invalidate indicates an expected call of Invalidate.
+func (mr *MockTaskListCacheMockRecorder) Invalidate(ctx, teamID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Invalidate", reflect.TypeOf((*MockTaskListCache)(nil).Invalidate), ctx, teamID)
+}
+
+// Set mocks base method.
+func (m *MockTaskListCache) Set(ctx context.Context, teamID, ver int64, q domain.TaskQuery, page *domain.TaskPage) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Set", ctx, teamID, ver, q, page)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// Set indicates an expected call of Set.
+func (mr *MockTaskListCacheMockRecorder) Set(ctx, teamID, ver, q, page any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Set", reflect.TypeOf((*MockTaskListCache)(nil).Set), ctx, teamID, ver, q, page)
+}
+
+// Version mocks base method.
+func (m *MockTaskListCache) Version(ctx context.Context, teamID int64) (int64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Version", ctx, teamID)
+	ret0, _ := ret[0].(int64)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// GetTaskList indicates an expected call of GetTaskList.
-func (mr *MockTaskCacheMockRecorder) GetTaskList(ctx, q any) *gomock.Call {
+// Version indicates an expected call of Version.
+func (mr *MockTaskListCacheMockRecorder) Version(ctx, teamID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTaskList", reflect.TypeOf((*MockTaskCache)(nil).GetTaskList), ctx, q)
-}
-
-// InvalidateTeam mocks base method.
-func (m *MockTaskCache) InvalidateTeam(ctx context.Context, teamID int64) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "InvalidateTeam", ctx, teamID)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// InvalidateTeam indicates an expected call of InvalidateTeam.
-func (mr *MockTaskCacheMockRecorder) InvalidateTeam(ctx, teamID any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "InvalidateTeam", reflect.TypeOf((*MockTaskCache)(nil).InvalidateTeam), ctx, teamID)
-}
-
-// SetTaskList mocks base method.
-func (m *MockTaskCache) SetTaskList(ctx context.Context, q domain.TaskQuery, page *domain.TaskPage) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "SetTaskList", ctx, q, page)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// SetTaskList indicates an expected call of SetTaskList.
-func (mr *MockTaskCacheMockRecorder) SetTaskList(ctx, q, page any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetTaskList", reflect.TypeOf((*MockTaskCache)(nil).SetTaskList), ctx, q, page)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Version", reflect.TypeOf((*MockTaskListCache)(nil).Version), ctx, teamID)
 }

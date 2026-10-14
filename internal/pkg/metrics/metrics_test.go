@@ -40,3 +40,23 @@ func TestRecordRateLimitDecision(t *testing.T) {
 		})
 	}
 }
+
+func TestCacheRequests_ExportsEverySeriesFromTheStart(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, 3, testutil.CollectAndCount(CacheRequests, "tasknexus_cache_requests_total"))
+}
+
+func TestRecordCacheRequest(t *testing.T) {
+	t.Parallel()
+	for _, result := range []string{ResultHit, ResultMiss, ResultError} {
+		t.Run(result, func(t *testing.T) {
+			t.Parallel()
+			before := testutil.ToFloat64(CacheRequests.WithLabelValues(CacheTaskList, result))
+
+			RecordCacheRequest(CacheTaskList, result)
+
+			assert.InDelta(t, before+1, testutil.ToFloat64(CacheRequests.WithLabelValues(CacheTaskList, result)), 0)
+		})
+	}
+}

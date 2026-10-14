@@ -10,6 +10,7 @@ import (
 
 	"github.com/andrewhigh08/team-task-nexus/internal/domain"
 	"github.com/andrewhigh08/team-task-nexus/internal/pkg/logger"
+	"github.com/andrewhigh08/team-task-nexus/internal/pkg/metrics"
 	"github.com/andrewhigh08/team-task-nexus/internal/port"
 )
 
@@ -27,7 +28,7 @@ type TaskDeps struct {
 	History  port.TaskHistoryRepository
 	Teams    port.TeamRepository
 	Users    port.UserRepository
-	Cache    port.TaskCache
+	Cache    port.TaskListCache
 	Tx       port.TxManager
 	Notifier port.NotificationService
 	Clock    func() time.Time
@@ -39,7 +40,7 @@ type TaskService struct {
 	history  port.TaskHistoryRepository
 	teams    port.TeamRepository
 	users    port.UserRepository
-	cache    port.TaskCache
+	cache    port.TaskListCache
 	tx       port.TxManager
 	notifier port.NotificationService
 	now      func() time.Time
@@ -58,7 +59,7 @@ func NewTaskService(deps TaskDeps) (*TaskService, error) {
 	case deps.Users == nil:
 		missing = "user repository"
 	case deps.Cache == nil:
-		missing = "task cache"
+		missing = "task list cache"
 	case deps.Tx == nil:
 		missing = "transaction manager"
 	case deps.Notifier == nil:
@@ -236,23 +237,40 @@ func (s *TaskService) List(ctx context.Context, q domain.TaskQuery) (*domain.Tas
 	if q.TeamID == 0 {
 		return s.listFromStore(ctx, q)
 	}
-
 	if _, err := requireMember(ctx, s.teams, q.TeamID, q.ViewerID); err != nil {
 		return nil, err
 	}
-	cached, err := s.cache.GetTaskList(ctx, q)
+	return s.listTeam(ctx, q)
+}
+
+// listTeam serves a list of one team from the cache and fills the cache on a miss. The version
+// is read before the database is queried: should a write commit in between, the page is stored
+// under the version that write retires, where no reader will look for it again. Without a
+// version the cache is bypassed altogether.
+func (s *TaskService) listTeam(ctx context.Context, q domain.TaskQuery) (*domain.TaskPage, error) {
+	ver, err := s.cache.Version(ctx, q.TeamID)
 	if err != nil {
-		logger.FromContext(ctx).Warn("task list cache read failed", "team_id", q.TeamID, "error", err)
+		cacheFailed(ctx, "version", q.TeamID, err)
+		return s.listFromStore(ctx, q)
 	}
-	if cached != nil {
+
+	cached, found, err := s.cache.Get(ctx, q.TeamID, ver, q)
+	switch {
+	case err != nil:
+		cacheFailed(ctx, "get", q.TeamID, err)
+	case found:
+		metrics.RecordCacheRequest(metrics.CacheTaskList, metrics.ResultHit)
 		return cached, nil
+	default:
+		metrics.RecordCacheRequest(metrics.CacheTaskList, metrics.ResultMiss)
 	}
+
 	page, err := s.listFromStore(ctx, q)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.cache.SetTaskList(ctx, q, page); err != nil {
-		logger.FromContext(ctx).Warn("task list cache write failed", "team_id", q.TeamID, "error", err)
+	if err := s.cache.Set(ctx, q.TeamID, ver, q, page); err != nil {
+		cacheFailed(ctx, "set", q.TeamID, err)
 	}
 	return page, nil
 }
@@ -315,12 +333,21 @@ func (s *TaskService) ListOrphaned(ctx context.Context, userID, teamID int64) ([
 	return s.tasks.ListOrphaned(ctx, teamID)
 }
 
-// invalidateTeam drops the cached task lists of the team after a committed change. A failure
-// leaves stale pages until they expire, which is not worth failing a committed write for.
+// invalidateTeam retires the cached task lists of the team after a committed change. The change
+// stays committed when the client gives up on the answer, so the call ignores the request's
+// cancellation; the Redis client's timeouts still bound it. A failure leaves stale pages until
+// they expire, which is not worth failing a committed write for.
 func (s *TaskService) invalidateTeam(ctx context.Context, teamID int64) {
-	if err := s.cache.InvalidateTeam(ctx, teamID); err != nil {
-		logger.FromContext(ctx).Warn("task list cache invalidation failed", "team_id", teamID, "error", err)
+	if err := s.cache.Invalidate(context.WithoutCancel(ctx), teamID); err != nil {
+		cacheFailed(ctx, "invalidate", teamID, err)
 	}
+}
+
+// cacheFailed logs and counts a failed operation on the task list cache. The cache only saves
+// database work, so its failures never reach the client.
+func cacheFailed(ctx context.Context, operation string, teamID int64, err error) {
+	metrics.RecordCacheRequest(metrics.CacheTaskList, metrics.ResultError)
+	logger.FromContext(ctx).Warn("task list cache failed", "operation", operation, "team_id", teamID, "error", err)
 }
 
 // notifyAssigned tells the assignee of a newly created task about it. The task is already

@@ -37,7 +37,7 @@ func (a *App) newRouter() (http.Handler, error) {
 		History:  mysqlrepo.NewTaskHistoryRepo(a.db),
 		Teams:    teamRepo,
 		Users:    userRepo,
-		Cache:    redisstore.NewTaskCache(a.rdb),
+		Cache:    redisstore.NewTaskListCache(a.rdb, a.cfg.Cache.TaskListTTL),
 		Tx:       txManager,
 		Notifier: notifier,
 	})

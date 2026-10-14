@@ -14,12 +14,24 @@ const (
 	ScopeAuth = "auth"
 )
 
-// Values of the result label of RateLimitDecisions. ResultError counts requests let through
-// because the limiter could not decide.
+// Values of the result label of RateLimitDecisions.
 const (
 	ResultAllowed = "allowed"
 	ResultLimited = "limited"
-	ResultError   = "error"
+)
+
+// ResultError is a value of the result label of both counters: in RateLimitDecisions it counts
+// requests let through because the limiter could not decide, in CacheRequests cache operations
+// that failed and were skipped.
+const ResultError = "error"
+
+// CacheTaskList is the cache label value of the team task list cache.
+const CacheTaskList = "task_list"
+
+// Values of the result label of CacheRequests, besides ResultError.
+const (
+	ResultHit  = "hit"
+	ResultMiss = "miss"
 )
 
 // RateLimitDecisions counts rate limiter decisions by scope and result.
@@ -43,4 +55,25 @@ func newRateLimitDecisions() *prometheus.CounterVec {
 // RecordRateLimitDecision increments RateLimitDecisions for scope and result.
 func RecordRateLimitDecision(scope, result string) {
 	RateLimitDecisions.WithLabelValues(scope, result).Inc()
+}
+
+// CacheRequests counts cache lookups by cache and result. Failed version reads, writes and
+// invalidations count as errors too.
+var CacheRequests = newCacheRequests()
+
+// newCacheRequests registers the counter and creates every known series.
+func newCacheRequests() *prometheus.CounterVec {
+	vec := promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "tasknexus_cache_requests_total",
+		Help: "Number of cache requests by cache and result.",
+	}, []string{"cache", "result"})
+	for _, result := range []string{ResultHit, ResultMiss, ResultError} {
+		vec.WithLabelValues(CacheTaskList, result)
+	}
+	return vec
+}
+
+// RecordCacheRequest increments CacheRequests for cache and result.
+func RecordCacheRequest(cache, result string) {
+	CacheRequests.WithLabelValues(cache, result).Inc()
 }

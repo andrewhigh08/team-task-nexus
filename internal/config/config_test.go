@@ -81,6 +81,7 @@ func validConfig() Config {
 		JWT:       JWTConfig{Secret: testSecret, Issuer: "team-task-nexus", TTL: 24 * time.Hour},
 		Password:  PasswordConfig{BcryptCost: 10},
 		RateLimit: RateLimitConfig{APIPerMinute: 100, AuthPerMinute: 10},
+		Cache:     CacheConfig{TaskListTTL: 5 * time.Minute},
 	}
 }
 
@@ -105,6 +106,7 @@ func TestLoad_EnvironmentOverridesEveryDefault(t *testing.T) {
 		"REDIS_ADDR": "cache.internal:6380", "REDIS_PASSWORD": "rpw", "REDIS_DB": "3",
 		"JWT_SECRET": strings.Repeat("s", 64), "JWT_ISSUER": "nexus-staging", "JWT_TTL": "15m",
 		"BCRYPT_COST": "12", "RATE_LIMIT_API_PER_MINUTE": "600", "RATE_LIMIT_AUTH_PER_MINUTE": "20",
+		"CACHE_TASK_LIST_TTL": "30s",
 	}
 	assert.ElementsMatch(t, envNames(reflect.TypeFor[Config]()), slices.Collect(maps.Keys(overrides)),
 		"every variable the configuration reads must be overridden by this test")
@@ -127,6 +129,7 @@ func TestLoad_EnvironmentOverridesEveryDefault(t *testing.T) {
 		JWT:       JWTConfig{Secret: strings.Repeat("s", 64), Issuer: "nexus-staging", TTL: 15 * time.Minute},
 		Password:  PasswordConfig{BcryptCost: 12},
 		RateLimit: RateLimitConfig{APIPerMinute: 600, AuthPerMinute: 20},
+		Cache:     CacheConfig{TaskListTTL: 30 * time.Second},
 	}
 	assert.Equal(t, want, *cfg)
 }
@@ -170,6 +173,7 @@ func TestLoad_RejectsUnparsableValues(t *testing.T) {
 		{name: "auth rate", key: "RATE_LIMIT_AUTH_PER_MINUTE", value: "ten"},
 		{name: "boolean", key: "TRUST_PROXY_HEADERS", value: "maybe"},
 		{name: "bcrypt cost", key: "BCRYPT_COST", value: "ten"},
+		{name: "cache ttl without a unit", key: "CACHE_TASK_LIST_TTL", value: "300"},
 	}
 
 	for _, tt := range tests {
@@ -259,6 +263,10 @@ func TestValidate(t *testing.T) {
 		{name: "one auth request per minute", mutate: func(c *Config) { c.RateLimit.AuthPerMinute = 1 }},
 		{name: "zero auth requests per minute", mutate: func(c *Config) { c.RateLimit.AuthPerMinute = 0 }, wantErr: "RATE_LIMIT_AUTH_PER_MINUTE"},
 		{name: "negative auth requests per minute", mutate: func(c *Config) { c.RateLimit.AuthPerMinute = -5 }, wantErr: "RATE_LIMIT_AUTH_PER_MINUTE must be greater than zero, got -5"},
+
+		{name: "one second task list ttl", mutate: func(c *Config) { c.Cache.TaskListTTL = time.Second }},
+		{name: "zero task list ttl", mutate: func(c *Config) { c.Cache.TaskListTTL = 0 }, wantErr: "CACHE_TASK_LIST_TTL must be greater than zero, got 0s"},
+		{name: "negative task list ttl", mutate: func(c *Config) { c.Cache.TaskListTTL = -time.Minute }, wantErr: "CACHE_TASK_LIST_TTL"},
 	}
 
 	for _, tt := range tests {
@@ -301,6 +309,7 @@ func TestValidate_ReportsEveryProblem(t *testing.T) {
 		"SERVER_SHUTDOWN_TIMEOUT", "LOG_LEVEL", "LOG_FORMAT", "DB_HOST", "DB_PORT", "DB_USER", "DB_NAME",
 		"DB_MAX_OPEN_CONNS", "DB_MAX_IDLE_CONNS", "DB_CONN_MAX_LIFETIME", "DB_CONNECT_TIMEOUT", "REDIS_ADDR", "REDIS_DB",
 		"JWT_SECRET", "JWT_ISSUER", "JWT_TTL", "BCRYPT_COST", "RATE_LIMIT_API_PER_MINUTE", "RATE_LIMIT_AUTH_PER_MINUTE",
+		"CACHE_TASK_LIST_TTL",
 	} {
 		assert.Contains(t, err.Error(), name)
 	}

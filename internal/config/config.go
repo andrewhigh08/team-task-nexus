@@ -46,6 +46,7 @@ type Config struct {
 	JWT       JWTConfig
 	Password  PasswordConfig
 	RateLimit RateLimitConfig
+	Cache     CacheConfig
 }
 
 // ServerConfig configures the HTTP listener. TrustProxyHeaders takes client addresses from
@@ -108,6 +109,12 @@ type RateLimitConfig struct {
 	AuthPerMinute int `env:"RATE_LIMIT_AUTH_PER_MINUTE" env-default:"10"`
 }
 
+// CacheConfig configures the Redis cache. TaskListTTL also bounds how long a page stays stale
+// when its invalidation fails.
+type CacheConfig struct {
+	TaskListTTL time.Duration `env:"CACHE_TASK_LIST_TTL" env-default:"5m"`
+}
+
 // Load reads the configuration from a .env file (when present) and the environment, then validates it.
 func Load() (*Config, error) {
 	if _, err := os.Stat(".env"); err == nil {
@@ -137,6 +144,7 @@ func (c *Config) Validate() error {
 		c.JWT.validate(),
 		c.Password.validate(),
 		c.RateLimit.validate(),
+		c.Cache.validate(),
 	)...)
 }
 
@@ -214,6 +222,10 @@ func (c RateLimitConfig) validate() []error {
 		positive("RATE_LIMIT_API_PER_MINUTE", c.APIPerMinute),
 		positive("RATE_LIMIT_AUTH_PER_MINUTE", c.AuthPerMinute),
 	}
+}
+
+func (c CacheConfig) validate() []error {
+	return []error{positive("CACHE_TASK_LIST_TTL", c.TaskListTTL)}
 }
 
 func validPort(name string, port int) error {

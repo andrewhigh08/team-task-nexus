@@ -1,17 +1,24 @@
 package service
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
 	"github.com/andrewhigh08/team-task-nexus/internal/domain"
 	"github.com/andrewhigh08/team-task-nexus/internal/pkg/apperror"
+	"github.com/andrewhigh08/team-task-nexus/internal/pkg/logger"
+	"github.com/andrewhigh08/team-task-nexus/internal/pkg/metrics"
 	"github.com/andrewhigh08/team-task-nexus/internal/pkg/opt"
 	"github.com/andrewhigh08/team-task-nexus/internal/port"
 )
@@ -55,6 +62,37 @@ func date(year int, month time.Month, day int) time.Time {
 	return time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
 }
 
+// captureLog returns a context whose logger writes JSON records into the returned buffer.
+func captureLog(t *testing.T) (context.Context, *bytes.Buffer) {
+	t.Helper()
+	var buf bytes.Buffer
+	log := logger.New(logger.Config{Level: "debug", Format: "json", Output: &buf})
+	return logger.NewContext(t.Context(), log), &buf
+}
+
+// cacheFailures returns the operations of the logged task list cache failures, in order, after
+// checking that each record is a warning about the test team.
+func cacheFailures(t *testing.T, logs *bytes.Buffer) []string {
+	t.Helper()
+	var operations []string
+	dec := json.NewDecoder(logs)
+	for {
+		var rec map[string]any
+		err := dec.Decode(&rec)
+		if errors.Is(err, io.EOF) {
+			return operations
+		}
+		require.NoError(t, err)
+		require.Equal(t, "task list cache failed", rec["msg"])
+		assert.Equal(t, "WARN", rec["level"])
+		assert.InDelta(t, testTeamID, rec["team_id"], 0)
+		assert.NotEmpty(t, rec["error"])
+		operation, ok := rec["operation"].(string)
+		require.True(t, ok, "log record without an operation: %v", rec)
+		operations = append(operations, operation)
+	}
+}
+
 func TestNewTaskService_RejectsMissingDeps(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -66,7 +104,7 @@ func TestNewTaskService_RejectsMissingDeps(t *testing.T) {
 		{name: "history repository", mutate: func(d *TaskDeps) { d.History = nil }, want: "task history repository is required"},
 		{name: "team repository", mutate: func(d *TaskDeps) { d.Teams = nil }, want: "team repository is required"},
 		{name: "user repository", mutate: func(d *TaskDeps) { d.Users = nil }, want: "user repository is required"},
-		{name: "cache", mutate: func(d *TaskDeps) { d.Cache = nil }, want: "task cache is required"},
+		{name: "cache", mutate: func(d *TaskDeps) { d.Cache = nil }, want: "task list cache is required"},
 		{name: "transaction manager", mutate: func(d *TaskDeps) { d.Tx = nil }, want: "transaction manager is required"},
 		{name: "notifier", mutate: func(d *TaskDeps) { d.Notifier = nil }, want: "notification service is required"},
 	}
@@ -127,7 +165,7 @@ func TestTaskService_Create(t *testing.T) {
 			}
 			f.tasks.EXPECT().Create(inTx, &tt.want).Return(testTaskID, nil)
 			f.tasks.EXPECT().GetByID(inTx, testTaskID).Return(stored, nil)
-			f.cache.EXPECT().InvalidateTeam(afterTx, testTeamID).Return(nil)
+			f.cache.EXPECT().Invalidate(afterTx, testTeamID).Return(nil)
 			if tt.assignee != 0 {
 				assignee := &domain.User{ID: tt.assignee, Email: "ada@example.com"}
 				f.users.EXPECT().GetByID(afterTx, tt.assignee).Return(assignee, nil)
@@ -211,21 +249,6 @@ func TestTaskService_Create_Rejections(t *testing.T) {
 	})
 }
 
-func TestTaskService_Create_SucceedsWhenTheCacheCannotBeInvalidated(t *testing.T) {
-	t.Parallel()
-	f := newFixture(t)
-	f.expectTx()
-	f.expectRole(inTx, memberUser, domain.TeamRoleMember)
-	f.tasks.EXPECT().Create(inTx, gomock.Any()).Return(testTaskID, nil)
-	f.tasks.EXPECT().GetByID(inTx, testTaskID).Return(testTask(), nil)
-	f.cache.EXPECT().InvalidateTeam(afterTx, testTeamID).Return(errors.New("redis: connection refused"))
-
-	task, err := f.taskService(t).Create(t.Context(), memberUser, port.CreateTaskInput{TeamID: testTeamID, Title: "t"})
-
-	require.NoError(t, err)
-	assert.Equal(t, testTask(), task)
-}
-
 func TestTaskService_Create_SucceedsWhenTheAssigneeCannotBeNotified(t *testing.T) {
 	t.Parallel()
 	assignee := &domain.User{ID: adminUser, Email: "ada@example.com"}
@@ -258,7 +281,7 @@ func TestTaskService_Create_SucceedsWhenTheAssigneeCannotBeNotified(t *testing.T
 			f.expectRole(inTx, adminUser, domain.TeamRoleAdmin)
 			f.tasks.EXPECT().Create(inTx, gomock.Any()).Return(testTaskID, nil)
 			f.tasks.EXPECT().GetByID(inTx, testTaskID).Return(stored, nil)
-			f.cache.EXPECT().InvalidateTeam(afterTx, testTeamID).Return(nil)
+			f.cache.EXPECT().Invalidate(afterTx, testTeamID).Return(nil)
 			tt.setup(f, stored)
 
 			task, err := f.taskService(t).Create(t.Context(), memberUser,
@@ -426,7 +449,7 @@ func TestTaskService_Update_RecordsEveryChangedField(t *testing.T) {
 				f.tasks.EXPECT().Update(inTx, &written).Return(nil),
 				f.history.EXPECT().Add(inTx, changes).Return(nil),
 				f.tasks.EXPECT().GetByID(inTx, testTaskID).Return(reread, nil),
-				f.cache.EXPECT().InvalidateTeam(afterTx, testTeamID).Return(nil),
+				f.cache.EXPECT().Invalidate(afterTx, testTeamID).Return(nil),
 			)
 
 			task, err := f.taskService(t).Update(t.Context(), memberUser, testTaskID, tt.in)
@@ -569,12 +592,97 @@ func TestTaskService_Update_RollsBackWhenTheHistoryCannotBeWritten(t *testing.T)
 	assert.Nil(t, task)
 }
 
+// committedWrite is a write of the test task: setup expects the calls the write makes up to
+// its commit, after which it invalidates the test team's cached lists.
+type committedWrite struct {
+	name  string
+	setup func(f *fixture)
+	write func(ctx context.Context, svc *TaskService) (*domain.Task, error)
+}
+
+func committedWrites() []committedWrite {
+	return []committedWrite{
+		{
+			name: "create",
+			setup: func(f *fixture) {
+				f.expectRole(inTx, memberUser, domain.TeamRoleMember)
+				f.tasks.EXPECT().Create(inTx, gomock.Any()).Return(testTaskID, nil)
+				f.tasks.EXPECT().GetByID(inTx, testTaskID).Return(testTask(), nil)
+			},
+			write: func(ctx context.Context, svc *TaskService) (*domain.Task, error) {
+				return svc.Create(ctx, memberUser, port.CreateTaskInput{TeamID: testTeamID, Title: "t"})
+			},
+		},
+		{
+			name: "update",
+			setup: func(f *fixture) {
+				f.tasks.EXPECT().GetByIDForUpdate(inTx, testTaskID).Return(testTask(), nil)
+				f.expectRole(inTx, memberUser, domain.TeamRoleMember)
+				f.tasks.EXPECT().Update(inTx, gomock.Any()).Return(nil)
+				f.history.EXPECT().Add(inTx, gomock.Any()).Return(nil)
+				f.tasks.EXPECT().GetByID(inTx, testTaskID).Return(testTask(), nil)
+			},
+			write: func(ctx context.Context, svc *TaskService) (*domain.Task, error) {
+				return svc.Update(ctx, memberUser, testTaskID, port.UpdateTaskInput{Title: opt.Of("Renew")})
+			},
+		},
+	}
+}
+
+func TestTaskService_WritesSucceedWhenTheCacheCannotBeInvalidated(t *testing.T) {
+	t.Parallel()
+	for _, tt := range committedWrites() {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			f := newFixture(t)
+			f.expectTx()
+			tt.setup(f)
+			f.cache.EXPECT().Invalidate(afterTx, testTeamID).Return(errors.New("redis: connection refused"))
+			ctx, logs := captureLog(t)
+
+			task, err := tt.write(ctx, f.taskService(t))
+
+			require.NoError(t, err, "the write is committed; a cache left stale until it expires must not fail it")
+			assert.Equal(t, testTask(), task)
+			assert.Equal(t, []string{"invalidate"}, cacheFailures(t, logs))
+		})
+	}
+}
+
+// TestTaskService_InvalidatesAfterTheClientHasGone cancels the request as its transaction
+// commits, as a client that times out does: the committed change must still retire the
+// cached lists rather than stay hidden behind them until they expire.
+func TestTaskService_InvalidatesAfterTheClientHasGone(t *testing.T) {
+	t.Parallel()
+	for _, tt := range committedWrites() {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			f := newFixture(t)
+			logCtx, logs := captureLog(t)
+			reqCtx, disconnect := context.WithCancel(logCtx)
+			f.tx.EXPECT().WithinTx(afterTx, gomock.Any()).DoAndReturn(
+				func(ctx context.Context, fn func(context.Context) error) error {
+					defer disconnect()
+					return fn(context.WithValue(ctx, txMarker{}, true))
+				})
+			tt.setup(f)
+			f.cache.EXPECT().Invalidate(afterTx, testTeamID).DoAndReturn(
+				func(ctx context.Context, _ int64) error { return ctx.Err() })
+
+			_, err := tt.write(reqCtx, f.taskService(t))
+
+			require.NoError(t, err)
+			assert.Empty(t, cacheFailures(t, logs), "the invalidation must ignore the canceled request")
+		})
+	}
+}
+
 func TestTaskService_List_AcrossTeamsIsScopedToTheViewer(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	tasks := []domain.Task{*testTask()}
-	// The repository receives the viewer, which it scopes the query by; the cache is never
-	// consulted, since its keys do not include the viewer.
+	// The repository receives the viewer, which it scopes the query by. The cache mock expects
+	// no call: its keys do not include the viewer, so lists across teams must bypass it.
 	f.tasks.EXPECT().List(gomock.Any(), domain.TaskQuery{ViewerID: memberUser, Status: domain.TaskStatusTodo, Page: 1, PageSize: 20}).
 		Return(tasks, 41, nil)
 
@@ -586,33 +694,71 @@ func TestTaskService_List_AcrossTeamsIsScopedToTheViewer(t *testing.T) {
 
 func TestTaskService_List_OfOneTeamUsesTheCache(t *testing.T) {
 	t.Parallel()
-	q := domain.TaskQuery{ViewerID: memberUser, TeamID: testTeamID, AssigneeID: adminUser, Page: 2, PageSize: 5}
-	stored := &domain.TaskPage{Tasks: []domain.Task{*testTask()}, Total: 6, Page: 2, PageSize: 5, TotalPages: 2}
+	const ver int64 = 42
+	in := domain.TaskQuery{ViewerID: memberUser, TeamID: testTeamID, Status: domain.TaskStatusTodo, AssigneeID: adminUser}
+	// The cache is keyed by the normalized query.
+	q := in
+	q.Page, q.PageSize = 1, 20
+	stored := &domain.TaskPage{Tasks: []domain.Task{*testTask()}, Total: 21, Page: 1, PageSize: 20, TotalPages: 2}
+	redisDown := errors.New("redis: i/o timeout")
 	tests := []struct {
-		name  string
-		setup func(f *fixture)
+		name         string
+		setup        func(f *fixture)
+		wantFailures []string // cache operations whose failure is logged
 	}{
 		{
 			name: "hit",
 			setup: func(f *fixture) {
-				f.cache.EXPECT().GetTaskList(gomock.Any(), q).Return(stored, nil)
+				gomock.InOrder(
+					f.cache.EXPECT().Version(gomock.Any(), testTeamID).Return(ver, nil),
+					f.cache.EXPECT().Get(gomock.Any(), testTeamID, ver, q).Return(stored, true, nil),
+				)
 			},
 		},
 		{
-			name: "miss",
+			name: "miss is filled under the version read before the query",
 			setup: func(f *fixture) {
-				f.cache.EXPECT().GetTaskList(gomock.Any(), q).Return(nil, nil)
-				f.tasks.EXPECT().List(gomock.Any(), q).Return(stored.Tasks, 6, nil)
-				f.cache.EXPECT().SetTaskList(gomock.Any(), q, stored).Return(nil)
+				gomock.InOrder(
+					f.cache.EXPECT().Version(gomock.Any(), testTeamID).Return(ver, nil),
+					f.cache.EXPECT().Get(gomock.Any(), testTeamID, ver, q).Return(nil, false, nil),
+					f.tasks.EXPECT().List(gomock.Any(), q).Return(stored.Tasks, 21, nil),
+					f.cache.EXPECT().Set(gomock.Any(), testTeamID, ver, q, stored).Return(nil),
+				)
 			},
 		},
 		{
-			name: "unreadable cache falls back to the database",
+			name: "unreadable page falls back to the database and is replaced",
 			setup: func(f *fixture) {
-				f.cache.EXPECT().GetTaskList(gomock.Any(), q).Return(nil, errors.New("redis: i/o timeout"))
-				f.tasks.EXPECT().List(gomock.Any(), q).Return(stored.Tasks, 6, nil)
-				f.cache.EXPECT().SetTaskList(gomock.Any(), q, stored).Return(errors.New("redis: i/o timeout"))
+				gomock.InOrder(
+					f.cache.EXPECT().Version(gomock.Any(), testTeamID).Return(ver, nil),
+					f.cache.EXPECT().Get(gomock.Any(), testTeamID, ver, q).Return(nil, false, redisDown),
+					f.tasks.EXPECT().List(gomock.Any(), q).Return(stored.Tasks, 21, nil),
+					f.cache.EXPECT().Set(gomock.Any(), testTeamID, ver, q, stored).Return(nil),
+				)
 			},
+			wantFailures: []string{"get"},
+		},
+		{
+			name: "failed write still answers from the database",
+			setup: func(f *fixture) {
+				gomock.InOrder(
+					f.cache.EXPECT().Version(gomock.Any(), testTeamID).Return(ver, nil),
+					f.cache.EXPECT().Get(gomock.Any(), testTeamID, ver, q).Return(nil, false, nil),
+					f.tasks.EXPECT().List(gomock.Any(), q).Return(stored.Tasks, 21, nil),
+					f.cache.EXPECT().Set(gomock.Any(), testTeamID, ver, q, stored).Return(redisDown),
+				)
+			},
+			wantFailures: []string{"set"},
+		},
+		{
+			name: "unreadable version bypasses the cache",
+			setup: func(f *fixture) {
+				gomock.InOrder(
+					f.cache.EXPECT().Version(gomock.Any(), testTeamID).Return(int64(0), redisDown),
+					f.tasks.EXPECT().List(gomock.Any(), q).Return(stored.Tasks, 21, nil),
+				)
+			},
+			wantFailures: []string{"version"},
 		},
 	}
 	for _, tt := range tests {
@@ -621,13 +767,178 @@ func TestTaskService_List_OfOneTeamUsesTheCache(t *testing.T) {
 			f := newFixture(t)
 			f.expectRole(gomock.Any(), memberUser, domain.TeamRoleMember)
 			tt.setup(f)
+			ctx, logs := captureLog(t)
 
-			page, err := f.taskService(t).List(t.Context(), q)
+			page, err := f.taskService(t).List(ctx, in)
 
 			require.NoError(t, err)
 			assert.Equal(t, stored, page)
+			assert.Equal(t, tt.wantFailures, cacheFailures(t, logs))
 		})
 	}
+}
+
+// TestTaskService_List_NeverServesAPageReadBeforeAConcurrentWrite lets a write commit while a
+// reader queries the database. The cache mock keeps pages by version, as the Redis keys do.
+func TestTaskService_List_NeverServesAPageReadBeforeAConcurrentWrite(t *testing.T) {
+	t.Parallel()
+	q := domain.TaskQuery{ViewerID: memberUser, TeamID: testTeamID, Page: 1, PageSize: 20}
+	beforeWrite, afterWrite := *testTask(), *testTask()
+	afterWrite.Status = domain.TaskStatusDone
+	const readers = 3
+	f := newFixture(t)
+	version := int64(4)
+	pages := map[int64]*domain.TaskPage{}
+	f.teams.EXPECT().GetMember(gomock.Any(), testTeamID, memberUser).
+		Return(&domain.TeamMember{TeamID: testTeamID, UserID: memberUser, Role: domain.TeamRoleMember}, nil).Times(readers)
+	f.cache.EXPECT().Version(gomock.Any(), testTeamID).
+		DoAndReturn(func(context.Context, int64) (int64, error) { return version, nil }).Times(readers)
+	f.cache.EXPECT().Get(gomock.Any(), testTeamID, gomock.Any(), q).
+		DoAndReturn(func(_ context.Context, _, ver int64, _ domain.TaskQuery) (*domain.TaskPage, bool, error) {
+			page, ok := pages[ver]
+			return page, ok, nil
+		}).Times(readers)
+	f.cache.EXPECT().Set(gomock.Any(), testTeamID, gomock.Any(), q, gomock.Any()).
+		DoAndReturn(func(_ context.Context, _, ver int64, _ domain.TaskQuery, page *domain.TaskPage) error {
+			pages[ver] = page
+			return nil
+		}).Times(2)
+	gomock.InOrder(
+		f.tasks.EXPECT().List(gomock.Any(), q).DoAndReturn(func(context.Context, domain.TaskQuery) ([]domain.Task, int, error) {
+			version++ // the write commits and invalidates while this query runs
+			return []domain.Task{beforeWrite}, 1, nil
+		}),
+		f.tasks.EXPECT().List(gomock.Any(), q).Return([]domain.Task{afterWrite}, 1, nil),
+	)
+	svc := f.taskService(t)
+
+	racing, err := svc.List(t.Context(), q)
+	require.NoError(t, err)
+	next, err := svc.List(t.Context(), q)
+	require.NoError(t, err)
+	cached, err := svc.List(t.Context(), q)
+	require.NoError(t, err)
+
+	assert.Equal(t, []domain.Task{beforeWrite}, racing.Tasks, "the racing reader answers with what it read")
+	assert.Equal(t, racing, pages[4], "but caches it under the version the write retired")
+	assert.Equal(t, []domain.Task{afterWrite}, next.Tasks, "the next reader misses and sees the write")
+	assert.Same(t, next, cached, "and its page is served from then on")
+}
+
+// TestTaskService_CountsCacheRequests does not run in parallel: the counter is process-wide,
+// and the parallel tests that use the cache would skew the deltas asserted here.
+func TestTaskService_CountsCacheRequests(t *testing.T) {
+	const ver int64 = 42
+	q := domain.TaskQuery{ViewerID: memberUser, TeamID: testTeamID, Page: 1, PageSize: 20}
+	stored := &domain.TaskPage{Tasks: []domain.Task{*testTask()}, Total: 1, Page: 1, PageSize: 20, TotalPages: 1}
+	redisDown := errors.New("redis: i/o timeout")
+	list := func(ctx context.Context, svc *TaskService) error {
+		_, err := svc.List(ctx, q)
+		return err
+	}
+	// listing expects the calls a list of the test team makes up to reading the version.
+	listing := func(f *fixture, verErr error) {
+		f.expectRole(gomock.Any(), memberUser, domain.TeamRoleMember)
+		f.cache.EXPECT().Version(gomock.Any(), testTeamID).Return(ver, verErr)
+	}
+	tests := []struct {
+		name  string
+		setup func(f *fixture)
+		call  func(ctx context.Context, svc *TaskService) error
+		want  map[string]float64 // increments by result
+	}{
+		{
+			name: "hit",
+			setup: func(f *fixture) {
+				listing(f, nil)
+				f.cache.EXPECT().Get(gomock.Any(), testTeamID, ver, q).Return(stored, true, nil)
+			},
+			call: list,
+			want: map[string]float64{metrics.ResultHit: 1},
+		},
+		{
+			name: "miss",
+			setup: func(f *fixture) {
+				listing(f, nil)
+				f.cache.EXPECT().Get(gomock.Any(), testTeamID, ver, q).Return(nil, false, nil)
+				f.tasks.EXPECT().List(gomock.Any(), q).Return(stored.Tasks, 1, nil)
+				f.cache.EXPECT().Set(gomock.Any(), testTeamID, ver, q, stored).Return(nil)
+			},
+			call: list,
+			want: map[string]float64{metrics.ResultMiss: 1},
+		},
+		{
+			name: "unreadable page",
+			setup: func(f *fixture) {
+				listing(f, nil)
+				f.cache.EXPECT().Get(gomock.Any(), testTeamID, ver, q).Return(nil, false, redisDown)
+				f.tasks.EXPECT().List(gomock.Any(), q).Return(stored.Tasks, 1, nil)
+				f.cache.EXPECT().Set(gomock.Any(), testTeamID, ver, q, stored).Return(nil)
+			},
+			call: list,
+			want: map[string]float64{metrics.ResultError: 1},
+		},
+		{
+			name: "failed write",
+			setup: func(f *fixture) {
+				listing(f, nil)
+				f.cache.EXPECT().Get(gomock.Any(), testTeamID, ver, q).Return(nil, false, nil)
+				f.tasks.EXPECT().List(gomock.Any(), q).Return(stored.Tasks, 1, nil)
+				f.cache.EXPECT().Set(gomock.Any(), testTeamID, ver, q, stored).Return(redisDown)
+			},
+			call: list,
+			want: map[string]float64{metrics.ResultMiss: 1, metrics.ResultError: 1},
+		},
+		{
+			name: "unreadable version",
+			setup: func(f *fixture) {
+				listing(f, redisDown)
+				f.tasks.EXPECT().List(gomock.Any(), q).Return(stored.Tasks, 1, nil)
+			},
+			call: list,
+			want: map[string]float64{metrics.ResultError: 1},
+		},
+		{
+			name: "failed invalidation",
+			setup: func(f *fixture) {
+				f.expectTx()
+				f.expectRole(inTx, memberUser, domain.TeamRoleMember)
+				f.tasks.EXPECT().Create(inTx, gomock.Any()).Return(testTaskID, nil)
+				f.tasks.EXPECT().GetByID(inTx, testTaskID).Return(testTask(), nil)
+				f.cache.EXPECT().Invalidate(afterTx, testTeamID).Return(redisDown)
+			},
+			call: func(ctx context.Context, svc *TaskService) error {
+				_, err := svc.Create(ctx, memberUser, port.CreateTaskInput{TeamID: testTeamID, Title: "t"})
+				return err
+			},
+			want: map[string]float64{metrics.ResultError: 1},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFixture(t)
+			tt.setup(f)
+			ctx, _ := captureLog(t) // keeps the logged failures out of the test output
+			want := cacheRequestCounts()
+			for result, n := range tt.want {
+				want[result] += n
+			}
+
+			require.NoError(t, tt.call(ctx, f.taskService(t)))
+
+			assert.Equal(t, want, cacheRequestCounts(), "exactly the expected series are incremented")
+		})
+	}
+}
+
+// cacheRequestCounts returns every series of the task list cache counter keyed by result.
+func cacheRequestCounts() map[string]float64 {
+	counts := make(map[string]float64)
+	for _, result := range []string{metrics.ResultHit, metrics.ResultMiss, metrics.ResultError} {
+		counts[result] = testutil.ToFloat64(metrics.CacheRequests.WithLabelValues(metrics.CacheTaskList, result))
+	}
+	return counts
 }
 
 func TestTaskService_List_PropagatesRepositoryErrors(t *testing.T) {
@@ -644,8 +955,9 @@ func TestTaskService_List_PropagatesRepositoryErrors(t *testing.T) {
 			q:    domain.TaskQuery{ViewerID: memberUser, TeamID: testTeamID},
 			setup: func(f *fixture) {
 				f.expectRole(gomock.Any(), memberUser, domain.TeamRoleMember)
-				f.cache.EXPECT().GetTaskList(gomock.Any(), gomock.Any()).Return(nil, nil)
-				// No SetTaskList: a failed query must not be cached.
+				f.cache.EXPECT().Version(gomock.Any(), testTeamID).Return(int64(0), nil)
+				f.cache.EXPECT().Get(gomock.Any(), testTeamID, int64(0), gomock.Any()).Return(nil, false, nil)
+				// No Set: a failed query must not be cached.
 			},
 		},
 	}

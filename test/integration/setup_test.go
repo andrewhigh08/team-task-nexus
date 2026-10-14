@@ -180,7 +180,7 @@ type services struct {
 	teams    *service.TeamService
 	tasks    *service.TaskService
 	comments *service.CommentService
-	cache    *redisstore.TaskCache
+	cache    *redisstore.TaskListCache
 }
 
 func newServices(t *testing.T) services {
@@ -189,7 +189,7 @@ func newServices(t *testing.T) services {
 	teams := mysqlrepo.NewTeamRepo(testDB)
 	tasks := mysqlrepo.NewTaskRepo(testDB)
 	tx := mysqlrepo.NewTxManager(testDB)
-	cache := redisstore.NewTaskCache(testRedis)
+	cache := redisstore.NewTaskListCache(testRedis, time.Minute)
 	notifier := service.NewNotificationService()
 
 	teamSvc, err := service.NewTeamService(service.TeamDeps{Teams: teams, Users: users, Tx: tx})

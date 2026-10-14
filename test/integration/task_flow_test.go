@@ -50,11 +50,20 @@ func TestTaskCaching_Integration(t *testing.T) {
 	assert.Equal(t, 5, result2.Total)
 	assert.Equal(t, result1.Total, result2.Total)
 
-	// Check that data is in Redis
-	cached, err := svc.cache.GetTaskList(ctx, query)
+	// Check that data is in Redis under the current version
+	ver, err := svc.cache.Version(ctx, team.ID)
 	require.NoError(t, err)
-	assert.NotNil(t, cached)
+	cached, found, err := svc.cache.Get(ctx, team.ID, ver, query)
+	require.NoError(t, err)
+	require.True(t, found)
 	assert.Equal(t, 5, cached.Total)
+
+	// A new task invalidates the cached list
+	_, err = svc.tasks.Create(ctx, user.User.ID, port.CreateTaskInput{Title: "Task F", TeamID: team.ID})
+	require.NoError(t, err)
+	result3, err := svc.tasks.List(ctx, query)
+	require.NoError(t, err)
+	assert.Equal(t, 6, result3.Total)
 }
 
 func TestTaskPagination_Integration(t *testing.T) {
