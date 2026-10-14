@@ -154,7 +154,16 @@ func TestError(t *testing.T) {
 			}
 			if !tt.logged {
 				assert.Empty(t, logs.String(), "client errors are not logged")
+				return
 			}
+			var want Envelope
+			require.NoError(t, json.Unmarshal([]byte(tt.want), &want))
+			var entry map[string]any
+			require.NoError(t, json.Unmarshal(logs.Bytes(), &entry), "one record per server error; log: %s", logs.String())
+			assert.Equal(t, "ERROR", entry["level"])
+			assert.Equal(t, "request failed", entry["msg"])
+			assert.InDelta(t, tt.status, entry["status"], 0)
+			assert.Equal(t, want.Error.Code, entry["code"])
 		})
 	}
 }

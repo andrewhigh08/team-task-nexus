@@ -15,6 +15,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/jmoiron/sqlx"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/bcrypt"
@@ -63,6 +66,19 @@ func closedPort(t *testing.T) int {
 	port := l.Addr().(*net.TCPAddr).Port
 	require.NoError(t, l.Close())
 	return port
+}
+
+// idleRedis returns a Redis client for a local port nothing listens on. The client connects only
+// when a command is sent, so it can stand in for a real one where only Close matters.
+func idleRedis(t *testing.T) *redis.Client {
+	t.Helper()
+	return redis.NewClient(&redis.Options{Addr: net.JoinHostPort("127.0.0.1", strconv.Itoa(closedPort(t)))})
+}
+
+// requireRedisClosed fails the test unless rdb has been closed.
+func requireRedisClosed(t *testing.T, rdb *redis.Client) {
+	t.Helper()
+	require.ErrorIs(t, rdb.Ping(t.Context()).Err(), redis.ErrClosed, "the Redis client is released")
 }
 
 // hangUpPort returns a local TCP port whose server closes every connection it accepts, so that a
@@ -285,13 +301,13 @@ func (w *fakeWorker) Run(ctx context.Context) error {
 	return w.err
 }
 
-// newServedApp returns an App serving handler on a free loopback port, with a fake worker and
-// without databases.
+// newServedApp returns an App serving handler on a free loopback port, with a fake worker, an
+// idle Redis client for Run to release and no MySQL pool.
 func newServedApp(t *testing.T, handler http.Handler, workerErr error) (*App, string, *fakeWorker) {
 	t.Helper()
 	var logs syncBuffer
 	log := newTestLogger(&logs)
-	a := &App{cfg: testConfig(t, time.Second), base: log, log: log, router: handler}
+	a := &App{cfg: testConfig(t, time.Second), base: log, log: log, rdb: idleRedis(t), router: handler}
 	a.srv = a.newServer()
 	a.srv.Addr = net.JoinHostPort("127.0.0.1", strconv.Itoa(a.cfg.Server.Port))
 	worker := newFakeWorker(workerErr)
@@ -341,7 +357,7 @@ func TestRun_ServesUntilTheContextIsCanceled(t *testing.T) {
 		return resp.StatusCode == http.StatusTeapot
 	}, 5*time.Second, 20*time.Millisecond, "the server answers while running")
 
-	<-worker.started
+	awaitWhileRunning(t, worker.started, done, "the workers started")
 	cancel()
 	select {
 	case err := <-done:
@@ -350,6 +366,7 @@ func TestRun_ServesUntilTheContextIsCanceled(t *testing.T) {
 		t.Fatal("Run did not return after the context was canceled")
 	}
 	assert.True(t, isClosed(worker.stopped), "Run waits for the workers")
+	requireRedisClosed(t, a.rdb)
 	require.NoError(t, a.Close(), "Run has already released the resources; Close stays safe")
 }
 
@@ -372,9 +389,10 @@ func TestRun_StopsTheWorkersAfterTheServer(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- a.Run(ctx) }()
-	<-worker.started
+	awaitWhileRunning(t, worker.started, done, "the workers started")
 	go func() {
-		// Retried until the server listens; only the first request reaches the handler.
+		// Retried until the server listens, or until the test ends; only the first request
+		// reaches the handler.
 		for {
 			req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, baseURL, http.NoBody)
 			if !assert.NoError(t, err) {
@@ -384,11 +402,15 @@ func TestRun_StopsTheWorkersAfterTheServer(t *testing.T) {
 				_ = resp.Body.Close()
 				return
 			}
-			time.Sleep(10 * time.Millisecond)
+			select {
+			case <-t.Context().Done():
+				return
+			case <-time.After(10 * time.Millisecond):
+			}
 		}
 	}()
 
-	<-entered
+	awaitWhileRunning(t, entered, done, "the request reached the handler")
 	cancel()
 	// A worker stopped together with the server would see the request unanswered.
 	time.AfterFunc(100*time.Millisecond, func() { close(release) })
@@ -430,6 +452,20 @@ func TestRun_FailsWhenThePortIsTaken(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "http server")
 	assert.True(t, isClosed(worker.stopped), "the workers are stopped and waited for")
+	requireRedisClosed(t, a.rdb)
+}
+
+// awaitWhileRunning waits until ch is closed while Run, which reports to done, keeps running. It
+// fails the test if Run returns first or nothing happens within five seconds.
+func awaitWhileRunning(t *testing.T, ch <-chan struct{}, done <-chan error, what string) {
+	t.Helper()
+	select {
+	case <-ch:
+	case err := <-done:
+		t.Fatalf("Run returned before %s: %v", what, err)
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out waiting until %s", what)
+	}
 }
 
 func isClosed(ch <-chan struct{}) bool {
@@ -523,10 +559,16 @@ func TestDispatcherConfig_FollowsTheConfiguration(t *testing.T) {
 	}, a.dispatcherConfig())
 }
 
-func TestClose_IsIdempotent(t *testing.T) {
+func TestClose_ReleasesTheResourcesOnce(t *testing.T) {
 	t.Parallel()
-	a := &App{}
+	sqlDB, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	mock.ExpectClose()
+	a := &App{db: sqlx.NewDb(sqlDB, "mysql"), rdb: idleRedis(t)}
 
 	require.NoError(t, a.Close())
-	require.NoError(t, a.Close())
+	require.NoError(t, a.Close(), "the second Close does not close the Redis client again")
+
+	requireRedisClosed(t, a.rdb)
+	assert.NoError(t, mock.ExpectationsWereMet(), "the MySQL pool is closed")
 }

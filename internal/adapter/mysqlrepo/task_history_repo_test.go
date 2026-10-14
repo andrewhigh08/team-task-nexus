@@ -23,7 +23,8 @@ func TestTaskHistoryRepo_Add(t *testing.T) {
 	t.Run("one statement for all changes", func(t *testing.T) {
 		t.Parallel()
 		db, mock := newMockDB(t)
-		mock.ExpectExec(regexp.QuoteMeta("VALUES (?, ?, ?, ?, ?),(?, ?, ?, ?, ?)")).
+		mock.ExpectExec(sqlPattern("INSERT INTO task_history (task_id, user_id, field, old_value, new_value) "+
+			"VALUES (?, ?, ?, ?, ?),(?, ?, ?, ?, ?)")).
 			WithArgs(4, 3, "status", "todo", "done", 4, 3, "assignee_id", "", "3").
 			WillReturnResult(sqlmock.NewResult(10, 2))
 

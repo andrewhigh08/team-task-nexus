@@ -175,7 +175,8 @@ func TestTaskRepo_Update(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			db, mock := newMockDB(t)
-			exec := mock.ExpectExec(regexp.QuoteMeta("UPDATE tasks"))
+			exec := mock.ExpectExec(sqlPattern("UPDATE tasks SET title = ?, description = ?, status = ?, priority = ?, " +
+				"assignee_id = ?, due_date = ?, completed_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"))
 			if tt.args != nil {
 				exec.WithArgs(tt.args...)
 			}
