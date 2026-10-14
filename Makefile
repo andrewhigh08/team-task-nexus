@@ -1,37 +1,71 @@
-.PHONY: build run test test-integration test-coverage lint docker-up docker-down
+APP        := team-task-nexus
+VERSION    ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+LDFLAGS    := -s -w -X main.version=$(VERSION)
 
-APP_NAME=team-task-nexus
-BUILD_DIR=bin
-MAIN_PATH=./cmd/api
+GOLANGCI_VERSION    := v2.14.0
+GOVULNCHECK_VERSION := v1.9.0
+# An installed golangci-lint is preferred: go run rebuilds the linter from source on a cold cache.
+GOLANGCI   := $(if $(shell command -v golangci-lint 2>/dev/null),golangci-lint,go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_VERSION))
 
-build:
-	go build -o $(BUILD_DIR)/api $(MAIN_PATH)
+.DEFAULT_GOAL := help
 
-run:
-	go run $(MAIN_PATH)
+.PHONY: help build run test test-integration test-all cover lint fmt generate \
+        up down logs docker-build vuln clean
 
-test:
-	go test ./internal/... -v -count=1
+help: ## Show this help
+	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-test-integration:
+## Build
+
+build: ## Build static binary into bin/
+	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o bin/$(APP) ./cmd/api
+
+run: ## Run the API locally (needs MySQL and Redis, see .env.example)
+	go run ./cmd/api
+
+## Test
+
+test: ## Unit tests with race detector and coverage (integration suite is skipped by -short)
+	go test -race -short -count=1 -coverprofile=coverage.out -covermode=atomic ./...
+
+test-integration: ## Integration tests against real MySQL and Redis (needs Docker)
 	go test -race -count=1 -timeout 15m ./test/integration/...
 
-test-coverage:
-	go test ./internal/... -coverprofile=coverage.out -covermode=atomic
-	go tool cover -func=coverage.out
+test-all: test test-integration ## Unit + integration tests
+
+cover: test ## Open HTML coverage report
 	go tool cover -html=coverage.out -o coverage.html
+	@go tool cover -func=coverage.out | tail -n 1
 
-lint:
-	golangci-lint run ./...
+## Quality
 
-docker-up:
-	docker-compose up --build -d
+lint: ## Run golangci-lint
+	$(GOLANGCI) run ./...
 
-docker-down:
-	docker-compose down
+fmt: ## Format code
+	$(GOLANGCI) fmt ./...
 
-docker-logs:
-	docker-compose logs -f app
+generate: ## Regenerate mocks
+	go generate ./...
 
-clean:
-	rm -rf $(BUILD_DIR) coverage.out coverage.html
+vuln: ## Check dependencies for known vulnerabilities
+	go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
+
+## Docker
+
+up: ## Start the stack (API, MySQL, Redis, Prometheus)
+	docker compose up -d --build
+
+down: ## Stop the stack and remove volumes
+	docker compose down -v
+
+logs: ## Tail API logs
+	docker compose logs -f api
+
+docker-build: ## Build the Docker image
+	docker build --build-arg VERSION=$(VERSION) -t $(APP):$(VERSION) -t $(APP):latest .
+
+## Misc
+
+clean: ## Remove build and test artifacts
+	rm -rf bin/ coverage.out coverage.html
