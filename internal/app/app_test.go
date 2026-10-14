@@ -65,6 +65,25 @@ func closedPort(t *testing.T) int {
 	return port
 }
 
+// hangUpPort returns a local TCP port whose server closes every connection it accepts, so that a
+// MySQL client fails its handshake with a read error the driver logs.
+func hangUpPort(t *testing.T) int {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, l.Close()) })
+	go func() {
+		for {
+			conn, err := l.Accept()
+			if err != nil {
+				return
+			}
+			_ = conn.Close()
+		}
+	}()
+	return l.Addr().(*net.TCPAddr).Port
+}
+
 // testConfig returns a valid configuration whose MySQL and Redis addresses refuse connections.
 func testConfig(t *testing.T, connectTimeout time.Duration) *config.Config {
 	t.Helper()
@@ -137,6 +156,47 @@ func TestNew_FailsWhenADependencyIsUnreachable(t *testing.T) {
 			assert.Equal(t, "waiting for dependency", records[0]["msg"])
 			assert.Equal(t, "mysql", records[0]["dependency"])
 			assert.Equal(t, "app", records[0]["component"])
+		})
+	}
+}
+
+func TestMySQLPools_LogDriverMessagesWithTheMySQLComponent(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		open func(ctx context.Context, a *App) error
+	}{
+		{name: "application pool", open: func(ctx context.Context, a *App) error { return a.openMySQL(ctx) }},
+		{name: "migration pool", open: func(ctx context.Context, a *App) error {
+			connector, err := a.mysqlConnector(a.cfg.MigrationDSN())
+			if err != nil {
+				return err
+			}
+			return migrateUp(ctx, connector)
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var logs syncBuffer
+			log := newTestLogger(&logs)
+			cfg := testConfig(t, 300*time.Millisecond)
+			cfg.Database.Port = hangUpPort(t)
+			a := &App{cfg: cfg, base: log, log: log.WithComponent("app")}
+
+			err := tt.open(t.Context(), a)
+
+			require.Error(t, err)
+			require.NoError(t, a.Close())
+			driverRecords := 0
+			for _, rec := range logs.records(t) {
+				if rec["component"] == "mysql" {
+					driverRecords++
+					assert.Equal(t, "WARN", rec["level"])
+				}
+			}
+			assert.Positive(t, driverRecords, "the driver reports the broken connections through the application log")
 		})
 	}
 }

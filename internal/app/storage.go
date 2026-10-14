@@ -2,13 +2,16 @@ package app
 
 import (
 	"context"
+	"database/sql"
+	"database/sql/driver"
 	"fmt"
 	"time"
 
-	// Registers the "mysql" database/sql driver.
-	_ "github.com/go-sql-driver/mysql"
+	"github.com/go-sql-driver/mysql"
 	"github.com/jmoiron/sqlx"
 	"github.com/redis/go-redis/v9"
+
+	"github.com/andrewhigh08/team-task-nexus/internal/pkg/logger"
 )
 
 const (
@@ -23,10 +26,15 @@ const (
 
 // openMySQL opens the connection pool, waits until MySQL answers and applies the migrations.
 func (a *App) openMySQL(ctx context.Context) error {
-	db, err := sqlx.Open("mysql", a.cfg.DSN())
+	connector, err := a.mysqlConnector(a.cfg.DSN())
 	if err != nil {
 		return fmt.Errorf("open mysql: %w", err)
 	}
+	migrationConnector, err := a.mysqlConnector(a.cfg.MigrationDSN())
+	if err != nil {
+		return fmt.Errorf("open migration connection: %w", err)
+	}
+	db := sqlx.NewDb(sql.OpenDB(connector), "mysql")
 	a.db = db
 	db.SetMaxOpenConns(a.cfg.Database.MaxOpenConns)
 	db.SetMaxIdleConns(a.cfg.Database.MaxIdleConns)
@@ -37,11 +45,23 @@ func (a *App) openMySQL(ctx context.Context) error {
 	}
 	a.log.Info("mysql connection established", "host", a.cfg.Database.Host, "database", a.cfg.Database.Name)
 
-	if err := migrateUp(ctx, a.cfg.MigrationDSN()); err != nil {
+	if err := migrateUp(ctx, migrationConnector); err != nil {
 		return err
 	}
 	a.log.Info("database migrations applied")
 	return nil
+}
+
+// mysqlConnector returns a connector for dsn whose driver messages, such as a broken connection
+// being dropped, go to the log with the mysql component instead of to stderr. The logger is set
+// on the connector because mysql.SetLogger would change it for every pool in the process.
+func (a *App) mysqlConnector(dsn string) (driver.Connector, error) {
+	mc, err := mysql.ParseDSN(dsn)
+	if err != nil {
+		return nil, err
+	}
+	mc.Logger = logger.NewMySQLLogger(a.base.WithComponent("mysql"))
+	return mysql.NewConnector(mc)
 }
 
 // openRedis creates the client and waits until Redis answers.

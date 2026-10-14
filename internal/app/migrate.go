@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 
@@ -14,10 +15,11 @@ import (
 )
 
 // migrateUp applies the embedded migrations the database has not seen yet, over a connection
-// pool of its own that is closed before returning (see config.MigrationDSN). golang-migrate
-// takes no context: canceling ctx stops it between two migration files, never inside one.
-func migrateUp(ctx context.Context, dsn string) (err error) {
-	m, err := newMigrate(dsn)
+// pool of its own opened with connector and closed before returning (see config.MigrationDSN).
+// golang-migrate takes no context: canceling ctx stops it between two migration files, never
+// inside one.
+func migrateUp(ctx context.Context, connector driver.Connector) (err error) {
+	m, err := newMigrate(connector)
 	if err != nil {
 		return err
 	}
@@ -43,24 +45,21 @@ func migrateUp(ctx context.Context, dsn string) (err error) {
 	return nil
 }
 
-// newMigrate prepares golang-migrate on the embedded source and a new pool opened with dsn;
-// closing the result closes the pool.
-func newMigrate(dsn string) (*migrate.Migrate, error) {
+// newMigrate prepares golang-migrate on the embedded source and a new pool opened with
+// connector; closing the result closes the pool.
+func newMigrate(connector driver.Connector) (*migrate.Migrate, error) {
 	source, err := iofs.New(migrations.FS, ".")
 	if err != nil {
 		return nil, fmt.Errorf("read embedded migrations: %w", err)
 	}
-	db, err := sql.Open("mysql", dsn)
-	if err != nil {
-		return nil, errors.Join(fmt.Errorf("open migration connection: %w", err), source.Close())
-	}
-	driver, err := migratemysql.WithInstance(db, &migratemysql.Config{})
+	db := sql.OpenDB(connector)
+	dbDriver, err := migratemysql.WithInstance(db, &migratemysql.Config{})
 	if err != nil {
 		return nil, errors.Join(fmt.Errorf("prepare migration driver: %w", err), source.Close(), db.Close())
 	}
-	m, err := migrate.NewWithInstance("iofs", source, "mysql", driver)
+	m, err := migrate.NewWithInstance("iofs", source, "mysql", dbDriver)
 	if err != nil {
-		return nil, errors.Join(fmt.Errorf("prepare migrations: %w", err), source.Close(), driver.Close())
+		return nil, errors.Join(fmt.Errorf("prepare migrations: %w", err), source.Close(), dbDriver.Close())
 	}
 	return m, nil
 }

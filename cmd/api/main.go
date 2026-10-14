@@ -8,6 +8,8 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/redis/go-redis/v9"
+
 	"github.com/andrewhigh08/team-task-nexus/internal/app"
 	"github.com/andrewhigh08/team-task-nexus/internal/config"
 	"github.com/andrewhigh08/team-task-nexus/internal/pkg/logger"
@@ -32,6 +34,9 @@ func run() int {
 	logCfg.Level = cfg.Log.Level
 	logCfg.Format = cfg.Log.Format
 	log := logger.New(logCfg)
+	// go-redis logs through one logger for the whole process, so it is set here once rather than
+	// in app.New.
+	redis.SetLogger(logger.NewRedisLogger(log.WithComponent("redis")))
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

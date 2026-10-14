@@ -73,7 +73,9 @@ govulncheck is advisory. Keep all of it green.
   with `errors.Is` and `errors.As`, never with `==`.
 - Logs go through `log/slog` via `internal/pkg/logger`; inside a request take the logger from the
   context (`logger.FromContext`), so records carry `request_id` and `user_id`. Never log passwords,
-  tokens, emails or the webhook URL.
+  tokens, emails or the webhook URL. Driver messages go there too: `internal/app` opens every MySQL
+  pool through `mysqlConnector`, which sets `logger.MySQLLogger` on the connector (open new pools the
+  same way), and `cmd/api` installs `logger.RedisLogger` with `redis.SetLogger`.
 - Context is the first argument of everything that does I/O; never `context.Background()` on a
   request path.
 - SQL names its columns: no `SELECT *`. Repositories map `sql.ErrNoRows` to `NOT_FOUND` and duplicate
