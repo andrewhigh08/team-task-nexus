@@ -40,6 +40,7 @@ middleware per route group and the matched route pattern as a metrics label.
 - SQL is not checked at compile time, as sqlc would do. go-sqlmock tests pin the text and arguments
   of the queries, and the integration suite runs them against MySQL 8.4.
 - Migrations run forward only at startup. The down files exist and the integration suite applies
-  them in a round trip, but rolling a deployment back is a manual golang-migrate run.
+  them one at a time, checking that each restores the schema of the version before it, but rolling
+  a deployment back is a manual golang-migrate run.
 - Since Go 1.22 the standard mux matches methods and patterns as well; leaving chi would mean
   rebuilding route groups, the route pattern for metrics and the route walk of the contract test.

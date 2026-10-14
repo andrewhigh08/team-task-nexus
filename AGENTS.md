@@ -80,7 +80,9 @@ govulncheck is advisory. Keep all of it green.
   keys to `CONFLICT`.
 - Partial updates use `opt.Field[T]`, which tells an absent field from `null` and from a value.
   Handler DTOs are mapped to port inputs; domain types never see JSON.
-- Schema changes go into a new numbered migration with up and down files; never edit an applied one.
+- Schema changes go into a new numbered migration with up and down files; never edit the up file of
+  an applied one. A down file restores the schema of the version before it exactly and succeeds on
+  any data the API accepts; the integration suite checks every step.
 - Mocks are generated with `go generate` (mockgen pinned in `test/mocks/doc.go`); do not edit them by
   hand.
 - Tests are table-driven, call `t.Parallel()`, use testify `require` for errors and assert the
