@@ -71,7 +71,7 @@ REST API для командной работы с задачами на Go. П�
   readiness-пробы, graceful shutdown.
 - Контракт OpenAPI 3.1 в [api/openapi.yaml](api/openapi.yaml), сервис отдаёт его по `/openapi.yaml`;
   тест сверяет контракт с маршрутами роутера в обе стороны.
-- Docker-образ без root, `docker compose` с MySQL, Redis и Prometheus.
+- Docker-образ без root (числовой UID 10001), `docker compose` с MySQL, Redis и Prometheus.
 
 ## Быстрый старт
 
@@ -90,6 +90,7 @@ make up            # API, MySQL 8.4, Redis 8, Prometheus
 | Метрики | http://localhost:8080/metrics |
 | Prometheus | http://localhost:9090 |
 
+Порты стека открыты только на 127.0.0.1: у Redis в нём нет пароля, у MySQL фиксированный пароль root.
 `make logs` показывает логи API, `make down` останавливает стек и удаляет тома с данными. Запуск
 приложения без контейнера: поднять зависимости `docker compose up -d mysql redis`, скопировать
 `.env.example` в `.env` и выполнить `make run`.

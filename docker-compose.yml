@@ -20,7 +20,7 @@ services:
       JWT_SECRET: local-development-secret-change-me-0123456789
       NOTIFY_WEBHOOK_URL: ""
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     depends_on:
       mysql:
         condition: service_healthy
@@ -42,7 +42,7 @@ services:
       MYSQL_USER: app
       MYSQL_PASSWORD: apppassword
     ports:
-      - "3306:3306"
+      - "127.0.0.1:3306:3306"
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:
@@ -59,7 +59,7 @@ services:
     container_name: ttn_redis
     command: redis-server --maxmemory 128mb --maxmemory-policy volatile-lru
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -75,7 +75,7 @@ services:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     volumes:
       - ./configs/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
