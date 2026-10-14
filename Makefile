@@ -33,7 +33,7 @@ test-integration: ## Integration tests against real MySQL and Redis (needs Docke
 
 test-all: test test-integration ## Unit + integration tests
 
-cover: test ## Open HTML coverage report
+cover: test ## Write the HTML coverage report to coverage.html and print the total
 	go tool cover -html=coverage.out -o coverage.html
 	@go tool cover -func=coverage.out | tail -n 1
 

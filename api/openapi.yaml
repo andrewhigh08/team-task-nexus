@@ -900,8 +900,11 @@ components:
       description: |
         The request cannot be acted on. `BAD_REQUEST` is a body that is not valid JSON, holds
         unknown fields or has fields of the wrong type. `VALIDATION_ERROR` is input that breaks a
-        rule, including malformed ids and query parameters; `details.fields` maps every
-        offending field to its problem.
+        rule, including malformed ids and query parameters; `details.fields` maps the offending
+        fields that the failed check found to their problems. The rules on body fields are
+        checked together, so one response names all of their violations. The `due_date` format,
+        malformed ids and query parameters (the first one found) and the assignee's team
+        membership are separate checks, and each names a single field.
       content:
         application/json:
           schema:
@@ -915,7 +918,9 @@ components:
                   code: VALIDATION_ERROR
                   message: invalid input
                   details:
-                    fields: {title: is required, assignee_id: must be a member of the team}
+                    fields:
+                      title: is required
+                      priority: must be 1 (low), 2 (medium) or 3 (high)
             malformed:
               summary: Malformed body
               value:
