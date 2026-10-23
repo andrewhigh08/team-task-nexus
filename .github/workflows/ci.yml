@@ -16,6 +16,7 @@ concurrency:
 env:
   GOLANGCI_LINT_VERSION: v2.14.0
   GOVULNCHECK_VERSION: v1.9.0
+  GOSEC_VERSION: v2.29.0
   IMAGE_NAME: ghcr.io/${{ github.repository }}
 
 jobs:
@@ -93,9 +94,18 @@ jobs:
 
       - name: gosec
         # Fails the job, and so the publish, on high-severity, high-confidence findings.
-        uses: securego/gosec@v2.29.0
-        with:
-          args: -severity high -confidence high -fmt sarif -out gosec.sarif ./...
+        # Built with the job's Go rather than through securego/gosec's action, whose image ships
+        # an older Go with GOTOOLCHAIN=local and refuses this module. gosec v2.29.0 requires
+        # golang.org/x/tools v0.49.0, which cannot read the export data of Go 1.27.2 and later
+        # (securego/gosec#1774), so x/tools is raised until a gosec release includes the fix.
+        # The text report goes to the log too: a SARIF file alone hides package load errors.
+        run: |
+          tooldir="$RUNNER_TEMP/gosec-tool"
+          mkdir -p "$tooldir"
+          go -C "$tooldir" mod init gosec-tool
+          go -C "$tooldir" get "github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION}" golang.org/x/tools@v0.52.0
+          go -C "$tooldir" build -o "$RUNNER_TEMP/gosec" github.com/securego/gosec/v2/cmd/gosec
+          "$RUNNER_TEMP/gosec" -severity high -confidence high -fmt sarif -out gosec.sarif -stdout -verbose text ./...
 
       - name: Upload gosec results
         # Runs after a failed scan too, so the Security tab shows what blocked the job.

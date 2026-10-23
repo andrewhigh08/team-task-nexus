@@ -11,7 +11,7 @@ is visible to its members only; outsiders get 404, so ids cannot be probed. Task
 lock, task assignments and comments emit events through a transactional outbox (`SKIP LOCKED` claims,
 leases, exponential backoff, at-least-once delivery to a webhook), team task lists are cached in Redis
 and invalidated through per-team version counters, and requests are rate limited by a sliding-window Lua
-script in Redis. Stack: Go 1.26, chi, sqlx, MySQL 8.4, Redis 8, Prometheus. `make up` starts the API with
+script in Redis. Stack: Go 1.27, chi, sqlx, MySQL 8.4, Redis 8, Prometheus. `make up` starts the API with
 MySQL, Redis and Prometheus through Docker Compose; a curl walkthrough and the configuration reference are
 below. The design decisions are recorded in [docs/adr](docs/adr). The rest of this document is in Russian.
 
@@ -743,7 +743,7 @@ make vuln              # govulncheck
 make build             # статический бинарник в bin/
 ```
 
-Нужны Go 1.26 и Docker для интеграционных тестов. Моки генерируются через `go run` с закреплённой версией
+Нужны Go 1.27.3 и Docker для интеграционных тестов. Моки генерируются через `go run` с закреплённой версией
 mockgen; `make lint` использует установленный golangci-lint, а без него запускает закреплённую версию
 через `go run`. Правила для контрибьюторов собраны в [AGENTS.md](AGENTS.md), порядок сообщения
 об уязвимостях в [SECURITY.md](SECURITY.md).
